@@ -10,8 +10,6 @@ FIRESTORE_DATABASE = "(default)"
 MAX_JOBS_PER_RUN = 20
 
 # Vertex AI はデフォルトでユーザーデータをモデル学習に使用しない（Service Terms Section 17）
-# 追加の保護として Zero Data Retention (ZDR) を有効化することを推奨
-# 設定方法: scripts/disable_vertex_ai_cache.sh を実行
 
 DEFAULT_SEARCH_KEYWORDS = [
     "エンジニア 転職",

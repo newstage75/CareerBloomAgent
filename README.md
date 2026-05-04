@@ -165,7 +165,6 @@ AIエージェントがWeb上の求人を自律的に収集し、スキルだけ
 ## 🔒 データプライバシー
 
 - **Google のAI学習には一切使用されません**: Vertex AI (Google Cloud) では、ユーザーデータがモデルの学習・改善に使用されることはありません（[Service Terms Section 17](https://cloud.google.com/terms/service-terms)）。消費者向けGeminiアプリとは異なる企業向け保証です。
-- **Zero Data Retention (ZDR)**: `scripts/disable_vertex_ai_cache.sh` により、プロンプト・レスポンスのキャッシュも無効化し、Google側にデータが一切残らない構成にできます。
 - **データの所在**: 全ユーザーデータは `asia-northeast1`（東京リージョン）の Firestore に保存。Google の外部に出ることはありません。
 
 ---
