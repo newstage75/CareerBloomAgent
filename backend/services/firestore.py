@@ -113,10 +113,17 @@ async def delete_skill(uid: str, skill_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def get_chat_sessions(uid: str) -> list[dict]:
+async def get_chat_sessions(uid: str, mode: str | None = None) -> list[dict]:
     db = _get_db()
     ref = db.collection("users").document(uid).collection("chat_sessions")
-    query = ref.order_by("updated_at", direction=firestore_module.Query.DESCENDING).limit(20)
+    if mode:
+        query = ref.where("mode", "==", mode).order_by(
+            "updated_at", direction=firestore_module.Query.DESCENDING
+        ).limit(20)
+    else:
+        query = ref.order_by(
+            "updated_at", direction=firestore_module.Query.DESCENDING
+        ).limit(20)
     sessions: list[dict] = []
     async for doc in query.stream():
         session = doc.to_dict()
@@ -126,7 +133,7 @@ async def get_chat_sessions(uid: str) -> list[dict]:
 
 
 async def get_or_create_chat_session(
-    uid: str, session_id: str | None = None
+    uid: str, session_id: str | None = None, mode: str | None = None
 ) -> tuple[str, list[dict]]:
     """Return ``(session_id, messages)``."""
     db = _get_db()
@@ -146,7 +153,10 @@ async def get_or_create_chat_session(
     doc_ref = (
         db.collection("users").document(uid).collection("chat_sessions").document()
     )
-    await doc_ref.set({"messages": [], "created_at": now, "updated_at": now})
+    session_data: dict = {"messages": [], "created_at": now, "updated_at": now}
+    if mode:
+        session_data["mode"] = mode
+    await doc_ref.set(session_data)
     return doc_ref.id, []
 
 
@@ -198,6 +208,122 @@ async def save_matches(uid: str, matches: list[dict]) -> None:
     # Write new ones
     for match in matches:
         await ref.document().set(match)
+
+
+# ---------------------------------------------------------------------------
+# Insights
+# ---------------------------------------------------------------------------
+
+
+async def get_insights(uid: str) -> dict | None:
+    db = _get_db()
+    doc = await db.collection("users").document(uid).collection("insights").document("latest").get()
+    return doc.to_dict() if doc.exists else None
+
+
+async def save_insights(uid: str, insights: dict) -> None:
+    db = _get_db()
+    await db.collection("users").document(uid).collection("insights").document("latest").set(insights)
+
+
+# ---------------------------------------------------------------------------
+# Bucket List / Never List
+# ---------------------------------------------------------------------------
+
+
+async def get_list_items(uid: str, list_name: str) -> list[dict]:
+    """Get all items from bucket_list or never_list."""
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection(list_name)
+    items: list[dict] = []
+    async for doc in ref.stream():
+        item = doc.to_dict()
+        item["id"] = doc.id
+        items.append(item)
+    return items
+
+
+async def set_list_items(uid: str, list_name: str, items: list[dict]) -> list[dict]:
+    """Replace all items in bucket_list or never_list."""
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection(list_name)
+
+    # Delete existing
+    async for doc in ref.stream():
+        await doc.reference.delete()
+
+    # Write new
+    result: list[dict] = []
+    for item in items:
+        doc_ref = ref.document(item["id"])
+        data = {"text": item["text"], "created_at": datetime.now(timezone.utc)}
+        await doc_ref.set(data)
+        result.append({"id": item["id"], "text": item["text"]})
+    return result
+
+
+async def add_list_item(uid: str, list_name: str, text: str) -> dict:
+    """Add one item to bucket_list or never_list."""
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection(list_name)
+    doc_ref = ref.document()
+    data = {"text": text, "created_at": datetime.now(timezone.utc)}
+    await doc_ref.set(data)
+    return {"id": doc_ref.id, "text": text}
+
+
+async def delete_list_item(uid: str, list_name: str, item_id: str) -> bool:
+    """Delete one item from bucket_list or never_list."""
+    db = _get_db()
+    doc_ref = (
+        db.collection("users").document(uid).collection(list_name).document(item_id)
+    )
+    doc = await doc_ref.get()
+    if not doc.exists:
+        return False
+    await doc_ref.delete()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Value History
+# ---------------------------------------------------------------------------
+
+
+async def get_value_history(
+    uid: str, limit: int = 20, offset: int = 0
+) -> tuple[list[dict], int]:
+    """Return (entries, total_count) for value_history."""
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection("value_history")
+
+    # Get total count
+    total = 0
+    async for _ in ref.stream():
+        total += 1
+
+    # Get paginated entries
+    query = ref.order_by("date", direction=firestore_module.Query.DESCENDING)
+    if offset > 0:
+        query = query.offset(offset)
+    query = query.limit(limit)
+
+    entries: list[dict] = []
+    async for doc in query.stream():
+        entry = doc.to_dict()
+        entry["id"] = doc.id
+        entries.append(entry)
+    return entries, total
+
+
+async def add_value_history_entry(uid: str, entry: dict) -> str:
+    """Add a value_history entry (called by insight_engine)."""
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection("value_history")
+    doc_ref = ref.document()
+    entry["date"] = datetime.now(timezone.utc)
+    await doc_ref.set(entry)
+    return doc_ref.id
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -9,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 from middleware.auth import get_current_user
 from models.chat import ChatRequest, ChatSession
 from models.user import UserInfo
-from services import firestore, vertex_ai
+from services import firestore, vertex_ai, agent_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,7 +34,7 @@ async def chat(body: ChatRequest, user: UserInfo = Depends(get_current_user)):
 
         try:
             async for chunk in vertex_ai.generate_chat_response(
-                history, body.message
+                history, body.message, mode=body.mode
             ):
                 full_response += chunk
                 yield {
@@ -62,6 +63,11 @@ async def chat(body: ChatRequest, user: UserInfo = Depends(get_current_user)):
             "event": "done",
             "data": json.dumps({"session_id": session_id}),
         }
+
+        # Fire-and-forget: trigger insight extraction after chat completes
+        asyncio.create_task(
+            agent_service.run_insight_extraction(user.uid, session_id)
+        )
 
     return EventSourceResponse(event_generator())
 

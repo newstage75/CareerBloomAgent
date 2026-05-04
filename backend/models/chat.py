@@ -9,6 +9,7 @@ from pydantic import BaseModel
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
+    mode: str | None = None  # "discover" | "vision"
 
 
 class ChatMessage(BaseModel):
@@ -18,6 +19,7 @@ class ChatMessage(BaseModel):
 
 class ChatSession(BaseModel):
     id: str
+    mode: str | None = None  # "discover" | "vision"
     messages: list[ChatMessage]
     created_at: datetime
     updated_at: datetime
