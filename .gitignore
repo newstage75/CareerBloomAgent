@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 develop-eggs/
@@ -44,6 +45,11 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
+*/.env
+*/.env.local
+*/.env.development.local
+*/.env.test.local
+*/.env.production.local
 
 # Google Cloud
 *.json
@@ -79,6 +85,9 @@ temp/
 # Scraped data (optional - commit sample data if needed)
 data/scraped/
 data/jobs/
+
+# Docs (internal only - not for public repo)
+docs/
 
 # Terraform
 infrastructure/.terraform/
