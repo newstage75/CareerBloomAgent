@@ -5,6 +5,15 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  async redirects() {
+    return [
+      {
+        source: "/chat",
+        destination: "/discover",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

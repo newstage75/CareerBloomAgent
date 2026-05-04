@@ -1,13 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { HiPlus, HiXMark } from "react-icons/hi2";
+import { apiFetch } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import type { SkillResponse } from "../types";
 
-type Skill = {
-  id: number;
-  name: string;
-  level: "beginner" | "intermediate" | "advanced";
-};
+type SkillLevel = "beginner" | "intermediate" | "advanced";
 
 const levelLabel = {
   beginner: "初級",
@@ -22,19 +21,54 @@ const levelColor = {
 } as const;
 
 export default function SkillsPage() {
-  const [skills, setSkills] = useState<Skill[]>([]);
+  const { user } = useAuth();
+  const [skills, setSkills] = useState<SkillResponse[]>([]);
   const [name, setName] = useState("");
-  const [level, setLevel] = useState<Skill["level"]>("intermediate");
+  const [level, setLevel] = useState<SkillLevel>("intermediate");
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleAdd = () => {
+  useEffect(() => {
+    if (!user) {
+      setSkills([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    apiFetch<SkillResponse[]>("/api/skills")
+      .then(setSkills)
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [user]);
+
+  const handleAdd = async () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
-    setSkills((prev) => [...prev, { id: Date.now(), name: trimmed, level }]);
-    setName("");
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const created = await apiFetch<SkillResponse>("/api/skills", {
+        method: "POST",
+        body: JSON.stringify({ name: trimmed, level }),
+      });
+      setSkills((prev) => [...prev, created]);
+      setName("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "追加に失敗しました");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleRemove = (id: number) => {
-    setSkills((prev) => prev.filter((s) => s.id !== id));
+  const handleRemove = async (id: string) => {
+    setError(null);
+    try {
+      await apiFetch(`/api/skills/${id}`, { method: "DELETE" });
+      setSkills((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "削除に失敗しました");
+    }
   };
 
   return (
@@ -42,9 +76,15 @@ export default function SkillsPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">スキル管理</h1>
         <p className="mt-1 text-sm text-gray-500">
-          あなたのスキルを登録して、マッチング精度を向上させましょう
+          対話で発見された価値観と合わせて、マッチング分析に活用されます
         </p>
       </div>
+
+      {error && (
+        <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      )}
 
       <form
         onSubmit={(e) => {
@@ -79,7 +119,7 @@ export default function SkillsPage() {
           <select
             id="skill-level"
             value={level}
-            onChange={(e) => setLevel(e.target.value as Skill["level"])}
+            onChange={(e) => setLevel(e.target.value as SkillLevel)}
             className="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           >
             <option value="beginner">初級</option>
@@ -89,10 +129,11 @@ export default function SkillsPage() {
         </div>
         <button
           type="submit"
-          className="flex items-center gap-1 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          disabled={submitting}
+          className="flex items-center gap-1 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
           <HiPlus className="h-4 w-4" />
-          追加
+          {submitting ? "追加中..." : "追加"}
         </button>
       </form>
 
@@ -100,7 +141,9 @@ export default function SkillsPage() {
         <h2 className="text-lg font-semibold text-gray-900">
           登録済みスキル ({skills.length} 件)
         </h2>
-        {skills.length === 0 ? (
+        {loading ? (
+          <p className="mt-3 text-sm text-gray-400">読み込み中...</p>
+        ) : skills.length === 0 ? (
           <p className="mt-3 text-sm text-gray-400">
             スキルがまだ登録されていません。上のフォームから追加してください。
           </p>
@@ -116,9 +159,9 @@ export default function SkillsPage() {
                     {skill.name}
                   </span>
                   <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${levelColor[skill.level]}`}
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${levelColor[skill.level as SkillLevel] ?? "bg-gray-100 text-gray-700"}`}
                   >
-                    {levelLabel[skill.level]}
+                    {levelLabel[skill.level as SkillLevel] ?? skill.level}
                   </span>
                 </div>
                 <button
