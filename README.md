@@ -85,9 +85,12 @@ AIエージェントがWeb上の求人を自律的に収集し、スキルだけ
 - **GitHub Actions** (CI/CD)
 - **Firebase Authentication**
 
-### AI Webブラウジング
-- **Vertex AI (Gemini)** + **Google Search API**: AIエージェントによる自律的なWeb情報収集
-- **Grounding with Google Search**: 最新の求人情報をリアルタイムに取得
+### AI エージェント（ADK マルチエージェント）
+- **Google Agent Development Kit (ADK)**: 3つの独立エージェントによるマルチエージェント構成
+- **Insight Extractor**: 対話履歴から価値観・ビジョンを自動抽出
+- **Matching Calculator**: スキル+価値観ベースの企業マッチング計算
+- **Job Collector**: Google Search Grounding による自律的な求人収集
+- **Vertex AI (Gemini 2.5 Flash)**: 各エージェントの推論エンジン
 
 ---
 
@@ -105,16 +108,28 @@ AIエージェントがWeb上の求人を自律的に収集し、スキルだけ
 │              Cloud Run (FastAPI)                    │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
 │  │ Auth API │ │ Chat API │ │ Matching API     │   │
-│  └──────────┘ └──────────┘ └──────────────────┘   │
-└───────┬──────────┬──────────┬───────────┬──────────┘
-        │          │          │           │
-   ┌────┴────┐ ┌──┴───┐ ┌────┴─────┐ ┌──┴────┐
-   │Vertex AI│ │Firebase│ │Firestore │ │Cloud  │
-   │         │ │Auth    │ │          │ │Storage│
-   │-Gemini  │ └────────┘ │-Users    │ └───────┘
-   │-Embed   │            │-Jobs     │
-   └─────────┘            │-Matches  │
-                          └──────────┘
+│  └──────────┘ └────┬─────┘ └────────┬─────────┘   │
+└───────┬─────────────┼───────────────┼──────────────┘
+        │             │               │
+        │    ┌────────┼───────────────┼────────────┐
+        │    │   ADK Multi-Agent System            │
+        │    │  ┌────────────┐ ┌──────────┐ ┌────────────┐
+        │    │  │ insight_   │ │ matching_│ │ job_       │
+        │    │  │ extractor  │ │calculator│ │ collector  │
+        │    │  └─────┬──────┘ └────┬─────┘ └─────┬──────┘
+        │    └────────┼─────────────┼──────────────┼───┘
+        │             │             │              │
+   ┌────┴────┐   ┌───┴─────────────┴──────────────┴──┐
+   │Firebase │   │           Firestore                │
+   │Auth     │   │  -Users (skills, insights, matches)│
+   └─────────┘   │  -Jobs (embeddings)                │
+                  └───────────────────────────────────┘
+                           │
+                     ┌─────┴─────┐
+                     │ Vertex AI │
+                     │ -Gemini   │
+                     │ -Embed    │
+                     └───────────┘
 ```
 
 ---
@@ -144,6 +159,14 @@ AIエージェントがWeb上の求人を自律的に収集し、スキルだけ
 **最適化施策により、平均44%のコスト削減を実現**
 
 <!-- 詳細は docs/cost-optimization.md を参照 -->
+
+---
+
+## 🔒 データプライバシー
+
+- **Google のAI学習には一切使用されません**: Vertex AI (Google Cloud) では、ユーザーデータがモデルの学習・改善に使用されることはありません（[Service Terms Section 17](https://cloud.google.com/terms/service-terms)）。消費者向けGeminiアプリとは異なる企業向け保証です。
+- **Zero Data Retention (ZDR)**: `scripts/disable_vertex_ai_cache.sh` により、プロンプト・レスポンスのキャッシュも無効化し、Google側にデータが一切残らない構成にできます。
+- **データの所在**: 全ユーザーデータは `asia-northeast1`（東京リージョン）の Firestore に保存。Google の外部に出ることはありません。
 
 ---
 
@@ -181,7 +204,18 @@ cp .env.example .env
 uvicorn main:app --reload
 ```
 
-### 4. Google Cloud セットアップ
+### 4. ADK エージェント
+```bash
+cd agent
+pip install -e ".[dev]"
+
+# 個別エージェントの動作確認
+adk run insight_extractor
+adk run matching_calculator
+adk run job_collector
+```
+
+### 5. Google Cloud セットアップ
 ```bash
 # Google Cloud SDK インストール済みの場合
 gcloud auth login
@@ -211,9 +245,11 @@ TensyokuBloomAgent/
 │   ├── routers/          # APIルーター
 │   ├── services/         # ビジネスロジック
 │   └── models/           # データモデル
-├── agent/                # AI Webブラウジングエージェント
-│   ├── browser_agent.py  # AI自律ブラウジング
-│   └── job_extractor.py  # 求人情報の構造化
+├── agent/                # ADK マルチエージェントシステム
+│   ├── insight_extractor/ # 対話→価値観抽出エージェント
+│   ├── matching_calculator/ # スキル+価値観マッチング
+│   ├── job_collector/     # Web求人収集エージェント
+│   └── shared/            # 共通Firestoreクライアント
 ├── infrastructure/       # IaC (Terraform等)
 ├── docs/                 # ドキュメント
 ├── data/                 # データファイル
@@ -249,10 +285,11 @@ pytest
 
 ### MVP (2026年7月)
 - [x] プロジェクト設計・要件定義
-- [ ] AIキャリア相談チャット（価値観の言語化・深掘り）
-- [ ] スキル登録・可視化
-- [ ] AIブラウジングによる企業採用情報の収集
-- [ ] 価値観ベースの企業マッチング
+- [x] AIキャリア相談チャット（価値観の言語化・深掘り）
+- [x] スキル登録・可視化
+- [x] ADK マルチエージェント構築（insight_extractor / matching_calculator / job_collector）
+- [ ] 価値観ベースの企業マッチング（ADKエージェント統合完了）
+- [ ] デプロイパイプライン（Cloud Run）
 - [ ] ダッシュボード
 
 ### Phase 2 (2026年8月〜)

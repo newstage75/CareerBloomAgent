@@ -60,6 +60,9 @@ build/
 credentials.json
 service-account-key.json
 
+# Claude Code
+CLAUDE.md
+
 # IDEs
 .vscode/
 .idea/
