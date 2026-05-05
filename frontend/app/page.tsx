@@ -46,7 +46,7 @@ export default function Home() {
     <div className="mx-auto max-w-4xl space-y-8">
       <div className="text-center">
         <h1 className="text-2xl font-bold text-gray-900">
-          あなたのキャリアに花を咲かせよう
+          価値観を深掘り、キャリアに花を咲かせる
         </h1>
         <p className="mt-2 text-sm text-gray-500">
           AIとの対話を通じて、自分の価値観を発見し、理想のキャリアを描きましょう
@@ -97,11 +97,11 @@ export default function Home() {
             description="スキルを登録してマッチング精度を上げましょう"
           />
           <DashboardCard
-            title="マッチング"
+            title="お仕事ブラウジングβ"
             href="/matching"
             icon={<HiOutlineBriefcase className="h-6 w-6" />}
             value={matchValue}
-            description="価値観とスキルに基づいた企業マッチング"
+            description="求人検索・希望職種の調査をサポートします"
           />
         </div>
       </section>

@@ -40,7 +40,7 @@ export type JourneyStep = {
   completed: boolean;
 };
 
-export type ValueChangeCategory = "discovered" | "strengthened" | "shifted" | "vision_updated";
+export type ValueChangeCategory = "discovered" | "strengthened" | "shifted" | "vision_updated" | "removed";
 
 export type ValueChangeEntry = {
   id: string;

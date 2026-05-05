@@ -53,9 +53,9 @@ export default function MatchingPage() {
     <div className="mx-auto max-w-3xl space-y-8">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">マッチング結果</h1>
+          <h1 className="text-2xl font-bold text-gray-900">お仕事ブラウジングβ</h1>
           <p className="mt-1 text-sm text-gray-500">
-            あなたの価値観とスキルに基づいたAIマッチング結果です
+            求人検索・希望職種の調査をサポートします
           </p>
         </div>
         {user && (

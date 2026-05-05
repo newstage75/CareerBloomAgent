@@ -44,7 +44,7 @@ const navGroups: NavGroup[] = [
     heading: "ツール",
     items: [
       { href: "/skills", label: "スキル", icon: HiOutlineAcademicCap },
-      { href: "/matching", label: "マッチング", icon: HiOutlineBriefcase },
+      { href: "/matching", label: "お仕事ブラウジングβ", icon: HiOutlineBriefcase },
     ],
   },
 ];

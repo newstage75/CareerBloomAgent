@@ -5,6 +5,7 @@ const categoryStyles: Record<ValueChangeCategory, { dot: string; badge: string; 
   strengthened: { dot: "bg-green-500", badge: "bg-green-100 text-green-700", label: "確信度UP" },
   shifted: { dot: "bg-amber-500", badge: "bg-amber-100 text-amber-700", label: "変化" },
   vision_updated: { dot: "bg-sky-500", badge: "bg-sky-100 text-sky-700", label: "ビジョン更新" },
+  removed: { dot: "bg-rose-500", badge: "bg-rose-100 text-rose-700", label: "削除" },
 };
 
 const sourceLabels: Record<string, string> = {
