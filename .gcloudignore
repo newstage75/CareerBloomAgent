@@ -1,0 +1,36 @@
+# Git
+.git/
+.github/
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Build artifacts
+.next/
+out/
+build/
+dist/
+
+# Environment / secrets
+.env
+.env.*
+credentials.json
+service-account-key.json
+
+# Unnecessary for Cloud Build
+docs/
+data/
+infrastructure/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+.DS_Store
+.vscode/
+.idea/
+CLAUDE.md
