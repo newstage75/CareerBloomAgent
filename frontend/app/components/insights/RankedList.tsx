@@ -22,9 +22,10 @@ import RankedListCard from "./RankedListCard";
 
 type Props = {
   initialItems: ListItem[];
+  onStar?: (id: string, starred: boolean) => void;
 };
 
-export default function RankedList({ initialItems }: Props) {
+export default function RankedList({ initialItems, onStar }: Props) {
   const [items, setItems] = useState<ListItem[]>(initialItems);
 
   const sensors = useSensors(
@@ -79,6 +80,7 @@ export default function RankedList({ initialItems }: Props) {
               rank={index + 1}
               onEdit={handleEdit}
               onDelete={handleDelete}
+              onStar={onStar}
             />
           ))}
         </SortableContext>

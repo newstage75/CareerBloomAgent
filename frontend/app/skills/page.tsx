@@ -6,15 +6,17 @@ import { apiFetch } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { SkillResponse } from "../types";
 
-type SkillLevel = "beginner" | "intermediate" | "advanced";
+type SkillLevel = "none" | "beginner" | "intermediate" | "advanced";
 
 const levelLabel = {
+  none: "指定なし",
   beginner: "初級",
   intermediate: "中級",
   advanced: "上級",
 } as const;
 
 const levelColor = {
+  none: "bg-gray-100 text-gray-600",
   beginner: "bg-green-100 text-green-700",
   intermediate: "bg-blue-100 text-blue-700",
   advanced: "bg-purple-100 text-purple-700",
@@ -24,7 +26,7 @@ export default function SkillsPage() {
   const { user } = useAuth();
   const [skills, setSkills] = useState<SkillResponse[]>([]);
   const [name, setName] = useState("");
-  const [level, setLevel] = useState<SkillLevel>("intermediate");
+  const [level, setLevel] = useState<SkillLevel>("none");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +124,7 @@ export default function SkillsPage() {
             onChange={(e) => setLevel(e.target.value as SkillLevel)}
             className="mt-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           >
+            <option value="none">指定なし</option>
             <option value="beginner">初級</option>
             <option value="intermediate">中級</option>
             <option value="advanced">上級</option>

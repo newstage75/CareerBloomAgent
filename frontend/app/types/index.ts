@@ -12,6 +12,7 @@ export type ValueItem = {
   label: string;
   description: string;
   confidence: "high" | "medium" | "low";
+  starred?: boolean;
 };
 
 export type VisionSummary = {
@@ -23,6 +24,7 @@ export type VisionSummary = {
 export type ListItem = {
   id: string;
   text: string;
+  starred?: boolean;
 };
 
 export type UserInsights = {

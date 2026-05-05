@@ -26,6 +26,7 @@ type ApiInsightsResponse =
         label: string;
         description: string;
         confidence: "high" | "medium" | "low";
+        starred?: boolean;
       }[];
       vision: { short_term: string; mid_term: string; long_term: string };
       strengths: string[];
@@ -39,7 +40,7 @@ function mapApiToInsights(
   data: Exclude<ApiInsightsResponse, { status: "empty" }>
 ): UserInsights {
   return {
-    values: data.values,
+    values: data.values.map((v) => ({ ...v, starred: v.starred ?? false })),
     vision: {
       shortTerm: data.vision.short_term,
       midTerm: data.vision.mid_term,
@@ -52,12 +53,15 @@ function mapApiToInsights(
   };
 }
 
+const MAX_VALUES_DISPLAY = 5;
+
 export default function InsightsPage() {
   const { user, loading: authLoading } = useAuth();
   const [insights, setInsights] = useState<UserInsights | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAllValues, setShowAllValues] = useState(false);
 
   useEffect(() => {
     if (authLoading || !user) return;
@@ -87,6 +91,48 @@ export default function InsightsPage() {
 
     fetchInsights();
   }, [user, authLoading]);
+
+  const handleStarValue = async (label: string, starred: boolean) => {
+    try {
+      const data = await apiFetch<ApiInsightsResponse>("/api/insights/values/star", {
+        method: "POST",
+        body: JSON.stringify({ label, starred }),
+      });
+      if (!("status" in data)) {
+        setInsights(mapApiToInsights(data));
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleDeleteValue = async (label: string) => {
+    try {
+      const data = await apiFetch<ApiInsightsResponse>("/api/insights/values/delete", {
+        method: "POST",
+        body: JSON.stringify({ label }),
+      });
+      if (!("status" in data)) {
+        setInsights(mapApiToInsights(data));
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleStarListItem = async (listName: string, itemId: string, starred: boolean) => {
+    try {
+      const data = await apiFetch<ApiInsightsResponse>("/api/insights/list/star", {
+        method: "POST",
+        body: JSON.stringify({ list_name: listName, item_id: itemId, starred }),
+      });
+      if (!("status" in data)) {
+        setInsights(mapApiToInsights(data));
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const handleGenerate = async () => {
     try {
@@ -204,9 +250,35 @@ export default function InsightsPage() {
         icon={<HiOutlineHeart className="h-5 w-5" />}
       >
         <div className="space-y-3">
-          {insights.values.map((v) => (
-            <ValueCard key={v.label} {...v} />
-          ))}
+          {(() => {
+            // Starred values always shown first, then recent up to MAX
+            const starred = insights.values.filter((v) => v.starred);
+            const unstarred = insights.values.filter((v) => !v.starred);
+            const displayed = showAllValues
+              ? [...starred, ...unstarred]
+              : [...starred, ...unstarred.slice(0, MAX_VALUES_DISPLAY - starred.length)];
+            return (
+              <>
+                {displayed.map((v) => (
+                  <ValueCard
+                    key={v.label}
+                    {...v}
+                    onStar={handleStarValue}
+                    onDelete={handleDeleteValue}
+                  />
+                ))}
+                {!showAllValues && insights.values.length > MAX_VALUES_DISPLAY && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllValues(true)}
+                    className="w-full rounded-md border border-gray-200 py-2 text-sm text-gray-500 hover:bg-gray-50"
+                  >
+                    すべて表示（{insights.values.length}件）
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
       </InsightSection>
 
@@ -253,14 +325,20 @@ export default function InsightsPage() {
         title="人生で成し遂げたいリスト"
         icon={<HiOutlineTrophy className="h-5 w-5 text-emerald-500" />}
       >
-        <RankedList initialItems={insights.bucketList} />
+        <RankedList
+          initialItems={insights.bucketList}
+          onStar={(id, starred) => handleStarListItem("bucket_list", id, starred)}
+        />
       </InsightSection>
 
       <InsightSection
         title="人生でやりたくないことリスト"
         icon={<HiOutlineNoSymbol className="h-5 w-5 text-rose-500" />}
       >
-        <RankedList initialItems={insights.neverList} />
+        <RankedList
+          initialItems={insights.neverList}
+          onStar={(id, starred) => handleStarListItem("never_list", id, starred)}
+        />
       </InsightSection>
     </div>
   );

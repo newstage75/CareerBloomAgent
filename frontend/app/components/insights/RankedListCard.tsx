@@ -7,6 +7,8 @@ import {
   HiOutlineBars3,
   HiOutlinePencil,
   HiOutlineTrash,
+  HiStar,
+  HiOutlineStar,
 } from "react-icons/hi2";
 import type { ListItem } from "@/app/types";
 
@@ -15,9 +17,10 @@ type Props = {
   rank: number;
   onEdit: (id: string, text: string) => void;
   onDelete: (id: string) => void;
+  onStar?: (id: string, starred: boolean) => void;
 };
 
-export default function RankedListCard({ item, rank, onEdit, onDelete }: Props) {
+export default function RankedListCard({ item, rank, onEdit, onDelete, onStar }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -98,6 +101,20 @@ export default function RankedListCard({ item, rank, onEdit, onDelete }: Props) 
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {onStar && (
+          <button
+            type="button"
+            onClick={() => onStar(item.id, !item.starred)}
+            className="rounded p-1 text-gray-400 hover:text-amber-500"
+            title={item.starred ? "スターを外す" : "スターを付ける"}
+          >
+            {item.starred ? (
+              <HiStar className="h-4 w-4 text-amber-500" />
+            ) : (
+              <HiOutlineStar className="h-4 w-4" />
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setEditing(true)}
