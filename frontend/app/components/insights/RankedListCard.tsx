@@ -89,6 +89,8 @@ export default function RankedListCard({ item, rank, onEdit, onDelete, onStar }:
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
+              // IME変換中のEnter/Escapeは無視する（日本語入力の確定と区別）
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === "Enter") handleConfirm();
               if (e.key === "Escape") handleCancel();
             }}
