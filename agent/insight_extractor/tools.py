@@ -1,8 +1,15 @@
-"""Tools for the Insight Extractor agent."""
+"""Tools for the Insight Extractor agent.
+
+セキュリティ設計: ツールは LLM が引数で渡す user_id を一切受け取らない。
+認証された uid は ADK セッションの state に格納されており、
+`tool_context.state["uid"]` のみが信頼できる識別子。
+"""
 
 from __future__ import annotations
 
 import json
+
+from google.adk.tools import ToolContext
 
 from agent.shared.firestore_client import (
     add_value_history_entry,
@@ -12,16 +19,23 @@ from agent.shared.firestore_client import (
 )
 
 
-def get_chat_history(user_id: str, limit: int = 10) -> str:
-    """Firestore から対話履歴を取得し、テキスト形式で返す。
+def _require_uid(tool_context: ToolContext) -> str:
+    uid = tool_context.state.get("uid") if tool_context.state else None
+    if not uid:
+        raise PermissionError("認証された uid が session state に存在しません。")
+    return uid
+
+
+def get_chat_history(tool_context: ToolContext, limit: int = 10) -> str:
+    """認証ユーザーの対話履歴を取得し、テキスト形式で返す。
 
     Args:
-        user_id: ユーザーID
         limit: 取得するセッション数（デフォルト10）
 
     Returns:
         対話履歴のテキスト。セッションごとに区切られている。
     """
+    user_id = _require_uid(tool_context)
     sessions = get_chat_sessions(user_id, limit=limit)
 
     if not sessions:
@@ -39,26 +53,23 @@ def get_chat_history(user_id: str, limit: int = 10) -> str:
     return "\n".join(parts)
 
 
-def get_current_insights(user_id: str) -> str:
-    """既存のインサイトを取得する（差分比較用）。
-
-    Args:
-        user_id: ユーザーID
+def get_current_insights(tool_context: ToolContext) -> str:
+    """認証ユーザーの既存のインサイトを取得する（差分比較用）。
 
     Returns:
         既存インサイトのJSON文字列。存在しない場合は空メッセージ。
     """
+    user_id = _require_uid(tool_context)
     insights = get_insights(user_id)
     if insights is None:
         return "既存のインサイトはありません（初回抽出）。"
     return json.dumps(insights, ensure_ascii=False, default=str)
 
 
-def save_extracted_insights(user_id: str, insights_json: str) -> str:
-    """抽出したインサイトを Firestore の insights/latest に保存する。
+def save_extracted_insights(tool_context: ToolContext, insights_json: str) -> str:
+    """抽出したインサイトを認証ユーザーの insights/latest に保存する。
 
     Args:
-        user_id: ユーザーID
         insights_json: インサイトのJSON文字列。以下のフィールドを含む:
             - values: list[{label, description, confidence}]
             - vision: {short_term, mid_term, long_term}
@@ -70,6 +81,7 @@ def save_extracted_insights(user_id: str, insights_json: str) -> str:
     Returns:
         保存結果メッセージ
     """
+    user_id = _require_uid(tool_context)
     try:
         insights = json.loads(insights_json)
     except json.JSONDecodeError as e:
@@ -81,11 +93,16 @@ def save_extracted_insights(user_id: str, insights_json: str) -> str:
     return "インサイトを保存しました。"
 
 
-def add_value_history(user_id: str, category: str, title: str, description: str, source: str | None = None) -> str:
-    """価値観の変化履歴にエントリを追加する。
+def add_value_history(
+    tool_context: ToolContext,
+    category: str,
+    title: str,
+    description: str,
+    source: str | None = None,
+) -> str:
+    """認証ユーザーの価値観の変化履歴にエントリを追加する。
 
     Args:
-        user_id: ユーザーID
         category: 変化カテゴリ（discovered, strengthened, shifted, vision_updated）
         title: 変化のタイトル
         description: 変化の詳細説明
@@ -94,6 +111,7 @@ def add_value_history(user_id: str, category: str, title: str, description: str,
     Returns:
         作成されたエントリのID
     """
+    user_id = _require_uid(tool_context)
     entry: dict = {
         "category": category,
         "title": title,

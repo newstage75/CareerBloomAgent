@@ -1,4 +1,8 @@
-"""Tools for the Matching Calculator agent."""
+"""Tools for the Matching Calculator agent.
+
+セキュリティ設計: ユーザー固有データを扱うツールは LLM が引数で渡す user_id を一切受け取らない。
+認証された uid は ADK セッションの state に格納されており、`tool_context.state["uid"]` のみが信頼できる識別子。
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,7 @@ import json
 
 import numpy as np
 import vertexai
+from google.adk.tools import ToolContext
 from vertexai.language_models import TextEmbeddingModel
 
 from agent.config import GCP_PROJECT_ID, VERTEX_AI_LOCATION, EMBEDDING_MODEL_ID
@@ -27,19 +32,23 @@ def _get_embedding_model() -> TextEmbeddingModel:
     return _embedding_model
 
 
-def get_user_skills(user_id: str) -> str:
-    """ユーザーのスキルとembeddingを取得する。
+def _require_uid(tool_context: ToolContext) -> str:
+    uid = tool_context.state.get("uid") if tool_context.state else None
+    if not uid:
+        raise PermissionError("認証された uid が session state に存在しません。")
+    return uid
 
-    Args:
-        user_id: ユーザーID
+
+def get_user_skills(tool_context: ToolContext) -> str:
+    """認証ユーザーのスキルとembeddingを取得する。
 
     Returns:
         スキル情報のJSON文字列
     """
+    user_id = _require_uid(tool_context)
     skills = get_skills(user_id)
     if not skills:
         return "スキルが登録されていません。"
-    # Remove large embedding arrays from display but keep them for matching
     display = []
     for s in skills:
         display.append({
@@ -51,19 +60,16 @@ def get_user_skills(user_id: str) -> str:
     return json.dumps(display, ensure_ascii=False)
 
 
-def get_user_insights(user_id: str) -> str:
-    """ユーザーの価値観テキストを取得する。
-
-    Args:
-        user_id: ユーザーID
+def get_user_insights(tool_context: ToolContext) -> str:
+    """認証ユーザーの価値観テキストを取得する。
 
     Returns:
         価値観情報のJSON文字列
     """
+    user_id = _require_uid(tool_context)
     insights = get_insights(user_id)
     if insights is None:
         return "インサイトがまだ生成されていません。"
-    # Return values and vision for matching
     relevant = {
         "values": insights.get("values", []),
         "vision": insights.get("vision", {}),
@@ -141,11 +147,10 @@ def generate_embeddings(texts_json: str) -> str:
     return json.dumps(embeddings)
 
 
-def save_match_results(user_id: str, results_json: str) -> str:
-    """マッチング結果を Firestore に保存する。
+def save_match_results(tool_context: ToolContext, results_json: str) -> str:
+    """マッチング結果を認証ユーザーの Firestore に保存する。
 
     Args:
-        user_id: ユーザーID
         results_json: マッチング結果のJSON文字列。各要素:
             - job_id: str
             - company: str
@@ -159,6 +164,7 @@ def save_match_results(user_id: str, results_json: str) -> str:
     Returns:
         保存結果メッセージ
     """
+    user_id = _require_uid(tool_context)
     try:
         results = json.loads(results_json)
     except json.JSONDecodeError as e:

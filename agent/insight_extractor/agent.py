@@ -14,9 +14,13 @@ INSTRUCTION = """\
 あなたはキャリアカウンセリングの専門家であり、ユーザーの対話履歴を分析して
 価値観・ビジョン・強み・テーマを構造化して抽出するエージェントです。
 
+## 重要: ユーザー識別子について
+ツールには user_id 引数を渡してはいけません（受け付けません）。
+ツールは認証済みのユーザーIDを安全な経路（セッション state）から自動取得します。
+
 ## 処理手順
 
-1. `get_chat_history` で対話履歴を取得してください
+1. `get_chat_history` で対話履歴を取得してください（引数: limit のみ）
 2. 対話内容を分析し、以下を抽出してください:
    - values（価値観）: label, description, confidence(high/medium/low)
    - vision（将来ビジョン）: short_term, mid_term, long_term

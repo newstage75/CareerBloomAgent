@@ -15,6 +15,10 @@ from agent.matching_calculator.tools import (
 INSTRUCTION = """\
 あなたはユーザーのスキルと価値観を求人データとマッチングするエージェントです。
 
+## 重要: ユーザー識別子について
+ツールには user_id 引数を渡してはいけません（受け付けません）。
+ツールは認証済みのユーザーIDを安全な経路（セッション state）から自動取得します。
+
 ## 処理手順
 
 1. `get_user_skills` でユーザーのスキル情報を取得
