@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { HiOutlinePlus, HiOutlineClock } from "react-icons/hi2";
+import { HiOutlinePlus, HiOutlineClock, HiOutlineTrash } from "react-icons/hi2";
 import type { ChatMessage as ChatMessageType, ChatMode } from "@/app/types";
 import { apiFetch, streamChat } from "@/app/lib/api";
 import { useAuth } from "@/app/lib/auth";
@@ -140,6 +140,25 @@ export default function ChatInterface({
     setShowHistory(false);
   };
 
+  const handleDeleteSession = async (
+    e: React.MouseEvent,
+    targetId: string
+  ) => {
+    e.stopPropagation();
+    if (!confirm("この会話履歴を削除しますか？")) return;
+    try {
+      await apiFetch(`/api/chat/sessions/${targetId}`, { method: "DELETE" });
+      setSessions((prev) => prev.filter((s) => s.id !== targetId));
+      if (targetId === sessionId) {
+        setSessionId(null);
+        setMessages([{ id: 1, role: "assistant", content: initialGreeting }]);
+      }
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+      alert("削除に失敗しました");
+    }
+  };
+
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
     return d.toLocaleDateString("ja-JP", {
@@ -191,19 +210,32 @@ export default function ChatInterface({
               ? firstUserMsg.content.slice(0, 50) + (firstUserMsg.content.length > 50 ? "..." : "")
               : "（メッセージなし）";
             return (
-              <button
+              <div
                 key={s.id}
-                type="button"
-                onClick={() => handleSelectSession(s)}
-                className={`flex w-full items-center justify-between border-b border-gray-100 px-4 py-2.5 text-left text-sm hover:bg-gray-50 last:border-b-0 ${
+                className={`flex items-center border-b border-gray-100 last:border-b-0 ${
                   s.id === sessionId ? "bg-indigo-50" : ""
                 }`}
               >
-                <span className="truncate text-gray-700">{preview}</span>
-                <span className="ml-3 shrink-0 text-xs text-gray-400">
-                  {formatDate(s.updated_at)}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSession(s)}
+                  className="flex flex-1 items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-gray-50"
+                >
+                  <span className="truncate text-gray-700">{preview}</span>
+                  <span className="ml-3 shrink-0 text-xs text-gray-400">
+                    {formatDate(s.updated_at)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleDeleteSession(e, s.id)}
+                  className="px-3 py-2.5 text-gray-400 hover:text-rose-600"
+                  aria-label="削除"
+                  title="削除"
+                >
+                  <HiOutlineTrash className="h-4 w-4" />
+                </button>
+              </div>
             );
           })}
         </div>

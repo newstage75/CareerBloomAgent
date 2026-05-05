@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 
 from middleware.auth import get_current_user
@@ -87,3 +87,14 @@ async def get_sessions(
         )
         for s in sessions
     ]
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(
+    session_id: str,
+    user: UserInfo = Depends(get_current_user),
+):
+    deleted = await firestore.delete_chat_session(user.uid, session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return None

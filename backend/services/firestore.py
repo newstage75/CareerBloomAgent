@@ -179,6 +179,21 @@ async def append_chat_messages(
     )
 
 
+async def delete_chat_session(uid: str, session_id: str) -> bool:
+    db = _get_db()
+    doc_ref = (
+        db.collection("users")
+        .document(uid)
+        .collection("chat_sessions")
+        .document(session_id)
+    )
+    doc = await doc_ref.get()
+    if not doc.exists:
+        return False
+    await doc_ref.delete()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Matches
 # ---------------------------------------------------------------------------
