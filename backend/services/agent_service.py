@@ -85,48 +85,65 @@ async def _run_agent(runner: Runner, user_id: str, message: str) -> str | None:
 
 
 async def run_insight_extraction(uid: str, session_id: str) -> None:
-    """Fire-and-forget: チャット完了後に呼ばれる。"""
+    """Fire-and-forget: チャット完了後に呼ばれる。30秒タイムアウト。"""
     try:
         runner = _get_insight_runner()
-        await _run_agent(
-            runner,
-            user_id=uid,
-            message=f"ユーザー {uid} のセッション {session_id} からインサイトを抽出してください。",
+        await asyncio.wait_for(
+            _run_agent(
+                runner,
+                user_id=uid,
+                message=f"ユーザー {uid} のセッション {session_id} からインサイトを抽出してください。",
+            ),
+            timeout=30.0,
         )
         logger.info("Insight extraction completed for user %s", uid)
+    except asyncio.TimeoutError:
+        logger.warning("Insight extraction timed out for user %s", uid)
     except Exception as e:
         logger.warning("Insight extraction failed for user %s: %s", uid, e)
 
 
 async def run_matching_refresh(uid: str, contexts: list[str] | None = None) -> str | None:
-    """マッチング再計算。"""
+    """マッチング再計算。30秒タイムアウト。"""
     try:
         runner = _get_matching_runner()
         ctx_text = "、".join(contexts) if contexts else "価値観、スキル"
-        result = await _run_agent(
-            runner,
-            user_id=uid,
-            message=f"ユーザー {uid} の求人調査をしてください。ベースにするデータ: {ctx_text}",
+        result = await asyncio.wait_for(
+            _run_agent(
+                runner,
+                user_id=uid,
+                message=f"ユーザー {uid} の求人調査をしてください。ベースにするデータ: {ctx_text}",
+            ),
+            timeout=30.0,
         )
         logger.info("Matching refresh completed for user %s", uid)
         return result
+    except asyncio.TimeoutError:
+        logger.warning("Matching refresh timed out for user %s", uid)
+        return None
     except Exception as e:
         logger.warning("Matching refresh failed for user %s: %s", uid, e)
         return None
 
 
 async def run_job_collection(keywords: list[str] | None = None) -> str | None:
-    """求人収集バッチ実行。"""
+    """求人収集バッチ実行。30秒タイムアウト。"""
     try:
         runner = _get_job_collector_runner()
         kw_text = "、".join(keywords) if keywords else "デフォルトキーワード"
-        result = await _run_agent(
-            runner,
-            user_id="system",
-            message=f"以下のキーワードで求人情報を収集してください: {kw_text}",
+        result = await asyncio.wait_for(
+            _run_agent(
+                runner,
+                user_id="system",
+                message=f"以下のキーワードで求人情報を収集してください: {kw_text}",
+            ),
+            timeout=30.0,
         )
         logger.info("Job collection completed")
         return result
+    except asyncio.TimeoutError:
+        logger.warning("Job collection timed out")
+        return None
     except Exception as e:
         logger.warning("Job collection failed: %s", e)
         return None
