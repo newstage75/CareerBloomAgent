@@ -96,7 +96,7 @@ export default function RankedListCard({ item, rank, onEdit, onDelete, onStar }:
             className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
           />
         ) : (
-          <p className="truncate text-sm text-gray-800">{item.text}</p>
+          <p className="text-sm text-gray-800 break-words">{item.text}</p>
         )}
       </div>
 
