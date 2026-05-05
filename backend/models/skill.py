@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-SkillLevel = Literal["beginner", "intermediate", "advanced"]
+SkillLevel = Literal["none", "beginner", "intermediate", "advanced"]
 
 
 class SkillCreate(BaseModel):
