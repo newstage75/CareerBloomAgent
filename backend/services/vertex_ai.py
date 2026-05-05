@@ -5,7 +5,7 @@ import logging
 from typing import AsyncIterator
 
 import vertexai
-from vertexai.generative_models import Content, GenerativeModel, Part
+from vertexai.generative_models import Content, GenerationConfig, GenerativeModel, Part
 from vertexai.language_models import TextEmbeddingModel
 
 from config import settings
@@ -29,24 +29,26 @@ SYSTEM_INSTRUCTION = (
     "- 転職以外の話題は丁寧にお断りしてキャリア相談に戻す"
 )
 
-DISCOVER_SYSTEM_INSTRUCTION = """あなたは共感的なキャリアカウンセラーです。ユーザーの価値観を深く探求することが使命です。
+DISCOVER_SYSTEM_INSTRUCTION = """あなたはフレンドリーで好奇心旺盛なキャリアカウンセラーです。雑談を通じてユーザーの「人となり」を引き出すことが使命です。
 
 ## あなたの役割
-- ユーザーの過去の経験やエピソードから、大切にしている価値観を引き出す
-- 内省を促す質問を投げかけ、ユーザー自身も気づいていない価値観を発見する
-- 「なぜそう感じたのか」「その時何が嬉しかったのか」と深掘りする
-- 批判せず、共感的に傾聴する
+- 堅い質問ではなく、カジュアルな問いかけでユーザーの好み・考え方・価値観を幅広く引き出す
+- 1つのテーマを深掘りし続けるのではなく、テンポよく色んな話題を振る（数を回す）
+- 仕事の話だけでなく、日常（猫派か犬派か、好きな季節、休日の過ごし方など）からも価値観のヒントを見つける
+- 「大切にしていること」だけでなく「気にならないこと」「どうでもいいこと」も聞いて輪郭を描く
+- 似たエピソードを複数引き出して、パターンや傾向を見つける
 
 ## 対話スタイル
-- 一度に多くの質問をせず、1つずつ丁寧に掘り下げる
-- ユーザーの言葉を言い換えて確認する（リフレクション）
-- 具体的なエピソードを引き出す
-- 価値観のキーワードを適宜まとめて提示する
+- テンポよく、軽い雑談のノリで進める（面接ではなく友達との会話）
+- 同じ話題に留まりすぎない。1〜2ターンで新しい話題に切り替える
+- ユーザーの答えに短くリアクションしてすぐ次の質問へ
+- 「〇〇と△△ならどっち？」のような二択質問も積極的に使う
+- 時折、会話から見えてきた傾向を短くフィードバックする
 
 ## 回答ルール
-- 1回の回答は150文字以内を目安に簡潔にする
-- 質問は1つだけにする
-- 箇条書きは最小限にする
+- 1回の回答は80文字以内を目安にとにかく短く
+- 質問は1つだけ
+- 丁寧語（です・ます）は使うが、堅い表現は避ける。フランクだけどタメ口は使わない
 
 日本語で応答してください。"""
 
@@ -125,8 +127,17 @@ async def generate_chat_response(
         role = "user" if msg["role"] == "user" else "model"
         contents.append(Content(role=role, parts=[Part.from_text(msg["content"])]))
 
+    # チャットモード (discover/vision) は思考なし（レスポンス速度優先）
+    gen_config = None
+    if mode in ("discover", "vision"):
+        gen_config = GenerationConfig(
+            thinking_config={"thinking_budget": 0},
+        )
+
     chat = model.start_chat(history=contents)
-    response = await chat.send_message_async(user_message, stream=True)
+    response = await chat.send_message_async(
+        user_message, stream=True, generation_config=gen_config
+    )
 
     async for chunk in response:
         if not chunk.candidates:
