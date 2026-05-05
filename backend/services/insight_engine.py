@@ -8,7 +8,12 @@ import vertexai
 from vertexai.generative_models import GenerativeModel
 
 from config import settings
-from services.firestore import get_chat_sessions, save_insights
+from services.firestore import (
+    add_value_history_entry,
+    get_chat_sessions,
+    get_insights,
+    save_insights,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,8 +154,68 @@ async def generate_insights(uid: str) -> dict:
     # 6. Add timestamp
     insights["generated_at"] = datetime.now(timezone.utc)
 
-    # 7. Save to Firestore
+    # 7. Detect changes vs previous insights and record in value_history
+    await _record_value_changes(uid, insights)
+
+    # 8. Save to Firestore (latest + history)
     await save_insights(uid, insights)
 
-    # 8. Return
+    # 9. Return
     return insights
+
+
+async def _record_value_changes(uid: str, new_insights: dict) -> None:
+    """Compare new insights with existing ones and record changes to value_history."""
+    old_insights = await get_insights(uid)
+    if old_insights is None:
+        # First time: record all values as discovered
+        for value in new_insights.get("values", []):
+            await add_value_history_entry(uid, {
+                "category": "discovered",
+                "title": f"「{value['label']}」を発見",
+                "description": value.get("description", ""),
+                "source": "discover",
+            })
+        return
+
+    old_labels = {v["label"] for v in old_insights.get("values", [])}
+    new_labels = {v["label"] for v in new_insights.get("values", [])}
+
+    # Newly discovered values
+    for label in new_labels - old_labels:
+        value = next(v for v in new_insights["values"] if v["label"] == label)
+        await add_value_history_entry(uid, {
+            "category": "discovered",
+            "title": f"「{label}」を発見",
+            "description": value.get("description", ""),
+            "source": "discover",
+        })
+
+    # Removed values
+    for label in old_labels - new_labels:
+        old_value = next(v for v in old_insights["values"] if v["label"] == label)
+        await add_value_history_entry(uid, {
+            "category": "removed",
+            "title": f"「{label}」が価値観から外れた",
+            "description": old_value.get("description", ""),
+            "source": "discover",
+        })
+
+    # Check for vision changes
+    old_vision = old_insights.get("vision", {})
+    new_vision = new_insights.get("vision", {})
+    if old_vision and new_vision and old_vision != new_vision:
+        changed_parts = []
+        if old_vision.get("short_term") != new_vision.get("short_term"):
+            changed_parts.append("短期目標")
+        if old_vision.get("mid_term") != new_vision.get("mid_term"):
+            changed_parts.append("中期目標")
+        if old_vision.get("long_term") != new_vision.get("long_term"):
+            changed_parts.append("長期ビジョン")
+        if changed_parts:
+            await add_value_history_entry(uid, {
+                "category": "vision_updated",
+                "title": f"ビジョン更新: {', '.join(changed_parts)}",
+                "description": new_vision.get("long_term", ""),
+                "source": "vision",
+            })

@@ -30,6 +30,7 @@ INSTRUCTION = """\
    - 強化された価値観: category="strengthened"
    - 変化した価値観: category="shifted"
    - ビジョンの更新: category="vision_updated"
+   - 削除された価値観: category="removed"（以前あったが今回の抽出で出てこなかった場合）
 5. `save_extracted_insights` で最新データを保存してください
 
 ## 出力フォーマット（save_extracted_insights に渡すJSON）

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from middleware.auth import get_current_user
 from models.user import UserInfo
-from services.firestore import get_insights
+from services.firestore import get_insights, get_insights_history
 from services.insight_engine import generate_insights
 
 router = APIRouter()
@@ -16,6 +16,16 @@ async def get_user_insights(user: UserInfo = Depends(get_current_user)):
     if not insights:
         return {"status": "empty", "message": "インサイトがまだ生成されていません"}
     return insights
+
+
+@router.get("/insights/history")
+async def get_user_insights_history(
+    limit: int = 20,
+    user: UserInfo = Depends(get_current_user),
+):
+    """Get historical insight snapshots."""
+    entries = await get_insights_history(user.uid, limit=limit)
+    return {"entries": entries}
 
 
 @router.post("/insights/generate")

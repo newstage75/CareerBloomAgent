@@ -62,13 +62,22 @@ def get_insights(user_id: str) -> dict | None:
 
 
 def save_insights(user_id: str, insights: dict) -> None:
-    """Save insights to Firestore."""
+    """Save insights to latest AND append to history."""
     db = _get_db()
+    # Overwrite latest
     (
         db.collection("users")
         .document(user_id)
         .collection("insights")
         .document("latest")
+        .set(insights)
+    )
+    # Append to history (accumulative)
+    (
+        db.collection("users")
+        .document(user_id)
+        .collection("insights_history")
+        .document()
         .set(insights)
     )
 

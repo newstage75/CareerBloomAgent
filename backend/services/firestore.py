@@ -221,9 +221,27 @@ async def get_insights(uid: str) -> dict | None:
     return doc.to_dict() if doc.exists else None
 
 
-async def save_insights(uid: str, insights: dict) -> None:
+async def get_insights_history(uid: str, limit: int = 20) -> list[dict]:
+    """Get historical insight snapshots (newest first)."""
     db = _get_db()
+    ref = db.collection("users").document(uid).collection("insights_history")
+    query = ref.order_by("generated_at", direction=firestore_module.Query.DESCENDING).limit(limit)
+    entries: list[dict] = []
+    async for doc in query.stream():
+        entry = doc.to_dict()
+        entry["id"] = doc.id
+        entries.append(entry)
+    return entries
+
+
+async def save_insights(uid: str, insights: dict) -> None:
+    """Save insights to latest AND append to history."""
+    db = _get_db()
+    # Overwrite latest
     await db.collection("users").document(uid).collection("insights").document("latest").set(insights)
+    # Append to history (accumulative)
+    history_ref = db.collection("users").document(uid).collection("insights_history")
+    await history_ref.document().set(insights)
 
 
 # ---------------------------------------------------------------------------

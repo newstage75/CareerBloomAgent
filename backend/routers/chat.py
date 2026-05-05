@@ -5,7 +5,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends
-from sse_starlette.sse import EventSourceResponse
+from starlette.responses import StreamingResponse
 
 from middleware.auth import get_current_user
 from models.chat import ChatRequest, ChatSession
@@ -20,33 +20,24 @@ router = APIRouter()
 async def chat(body: ChatRequest, user: UserInfo = Depends(get_current_user)):
     """Send a message and receive a streaming SSE response from Gemini."""
     session_id, history = await firestore.get_or_create_chat_session(
-        user.uid, body.session_id
+        user.uid, body.session_id, mode=body.mode
     )
 
     async def event_generator():
         full_response = ""
 
         # First event: session metadata
-        yield {
-            "event": "session",
-            "data": json.dumps({"session_id": session_id}),
-        }
+        yield f"event: session\ndata: {json.dumps({'session_id': session_id})}\n\n"
 
         try:
             async for chunk in vertex_ai.generate_chat_response(
                 history, body.message, mode=body.mode
             ):
                 full_response += chunk
-                yield {
-                    "event": "message",
-                    "data": json.dumps({"content": chunk}),
-                }
+                yield f"event: message\ndata: {json.dumps({'content': chunk})}\n\n"
         except Exception as exc:
             logger.exception("Gemini streaming error")
-            yield {
-                "event": "error",
-                "data": json.dumps({"error": str(exc)}),
-            }
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
             return
 
         # Persist both messages
@@ -59,17 +50,22 @@ async def chat(body: ChatRequest, user: UserInfo = Depends(get_current_user)):
             ],
         )
 
-        yield {
-            "event": "done",
-            "data": json.dumps({"session_id": session_id}),
-        }
+        yield f"event: done\ndata: {json.dumps({'session_id': session_id})}\n\n"
 
         # Fire-and-forget: trigger insight extraction after chat completes
         asyncio.create_task(
             agent_service.run_insight_extraction(user.uid, session_id)
         )
 
-    return EventSourceResponse(event_generator())
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/sessions", response_model=list[ChatSession])
