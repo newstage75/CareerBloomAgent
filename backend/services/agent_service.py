@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import AsyncGenerator
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -60,11 +61,22 @@ def _get_job_collector_runner() -> Runner:
     return _job_collector_runner
 
 
-async def _run_agent(runner: Runner, user_id: str, message: str) -> str | None:
-    """Run an ADK agent and return the final text response."""
+async def _run_agent(
+    runner: Runner,
+    user_id: str,
+    message: str,
+    state: dict | None = None,
+) -> str | None:
+    """Run an ADK agent and return the final text response.
+
+    `state` is written into the session and exposed to tools via
+    `tool_context.state` — this is how we securely pass the authenticated uid
+    without letting the LLM forge it through tool arguments.
+    """
     session = await _session_service.create_session(
         app_name=APP_NAME,
         user_id=user_id,
+        state=state or {},
     )
 
     content = types.Content(
@@ -84,6 +96,64 @@ async def _run_agent(runner: Runner, user_id: str, message: str) -> str | None:
     return final_response
 
 
+async def stream_agent_events(
+    runner: Runner,
+    user_id: str,
+    message: str,
+    state: dict | None = None,
+) -> AsyncGenerator[dict, None]:
+    """Run an ADK agent and yield progress events.
+
+    Yields dicts with shape `{"type": "tool_call"|"tool_response"|"thinking"|"final"|"error", ...}`.
+    Callers translate these into SSE frames.
+    """
+    session = await _session_service.create_session(
+        app_name=APP_NAME,
+        user_id=user_id,
+        state=state or {},
+    )
+
+    content = types.Content(
+        role="user",
+        parts=[types.Part(text=message)],
+    )
+
+    try:
+        async for event in runner.run_async(
+            user_id=user_id,
+            session_id=session.id,
+            new_message=content,
+        ):
+            for call in event.get_function_calls() or []:
+                yield {
+                    "type": "tool_call",
+                    "name": call.name,
+                    "args": dict(call.args) if call.args else {},
+                }
+            for resp in event.get_function_responses() or []:
+                raw = resp.response if isinstance(resp.response, str) else str(resp.response)
+                summary = raw[:200] + ("…" if len(raw) > 200 else "")
+                yield {
+                    "type": "tool_response",
+                    "name": resp.name,
+                    "summary": summary,
+                }
+            if (
+                event.content
+                and event.content.parts
+                and event.content.parts[0].text
+                and not (event.get_function_calls() or event.get_function_responses())
+            ):
+                text = event.content.parts[0].text
+                if event.is_final_response():
+                    yield {"type": "final", "text": text}
+                else:
+                    yield {"type": "thinking", "text": text}
+    except Exception as exc:
+        logger.exception("Agent streaming failed")
+        yield {"type": "error", "message": str(exc)}
+
+
 async def run_insight_extraction(uid: str, session_id: str) -> None:
     """Fire-and-forget: チャット完了後に呼ばれる。30秒タイムアウト。"""
     try:
@@ -92,7 +162,8 @@ async def run_insight_extraction(uid: str, session_id: str) -> None:
             _run_agent(
                 runner,
                 user_id=uid,
-                message=f"ユーザー {uid} のセッション {session_id} からインサイトを抽出してください。",
+                message="現在のユーザーの最新セッションからインサイトを抽出してください。",
+                state={"uid": uid, "session_id": session_id},
             ),
             timeout=30.0,
         )
@@ -112,7 +183,8 @@ async def run_matching_refresh(uid: str, contexts: list[str] | None = None) -> s
             _run_agent(
                 runner,
                 user_id=uid,
-                message=f"ユーザー {uid} の求人調査をしてください。ベースにするデータ: {ctx_text}",
+                message=f"現在のユーザーの求人調査をしてください。ベースにするデータ: {ctx_text}",
+                state={"uid": uid},
             ),
             timeout=30.0,
         )
@@ -124,6 +196,29 @@ async def run_matching_refresh(uid: str, contexts: list[str] | None = None) -> s
     except Exception as e:
         logger.warning("Matching refresh failed for user %s: %s", uid, e)
         return None
+
+
+def stream_job_collection(keywords: list[str] | None) -> AsyncGenerator[dict, None]:
+    """Job collection streaming. Yields progress events."""
+    runner = _get_job_collector_runner()
+    kw_text = "、".join(keywords) if keywords else "デフォルトキーワード"
+    return stream_agent_events(
+        runner,
+        user_id="system",
+        message=f"以下のキーワードで求人情報を収集してください: {kw_text}",
+    )
+
+
+def stream_matching_refresh(uid: str, contexts: list[str] | None) -> AsyncGenerator[dict, None]:
+    """Matching refresh streaming. Yields progress events."""
+    runner = _get_matching_runner()
+    ctx_text = "、".join(contexts) if contexts else "価値観、スキル"
+    return stream_agent_events(
+        runner,
+        user_id=uid,
+        message=f"現在のユーザーの求人調査をしてください。ベースにするデータ: {ctx_text}",
+        state={"uid": uid},
+    )
 
 
 async def run_job_collection(keywords: list[str] | None = None) -> str | None:
