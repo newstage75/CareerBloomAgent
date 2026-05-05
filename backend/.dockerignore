@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+*.egg-info/
+.pytest_cache/
+frontend/
+docs/
+data/
+infrastructure/
+.git/
+.github/
+node_modules/
+.next/

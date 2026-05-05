@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env
+.env.*
+.git/
+backend/
+agent/
+docs/
+data/
+infrastructure/
