@@ -157,6 +157,27 @@ export default function MatchingPage() {
             elapsed: data.elapsed,
             kind: "thinking",
           });
+        } else if (data.type === "store_start") {
+          pushProgress({
+            label: "📥 求人を解析・保存中",
+            detail: data.message,
+            elapsed: data.elapsed,
+            kind: "status",
+          });
+        } else if (data.type === "store_done") {
+          pushProgress({
+            label: "✅ 求人保存完了",
+            detail: data.summary,
+            elapsed: data.elapsed,
+            kind: "tool_response",
+          });
+        } else if (data.type === "store_skipped") {
+          pushProgress({
+            label: "⏭ 保存スキップ",
+            detail: (data as { reason?: string }).reason,
+            elapsed: data.elapsed,
+            kind: "status",
+          });
         } else if (data.type === "error") {
           pushProgress({
             label: `⚠ ${data.agent} エラー`,

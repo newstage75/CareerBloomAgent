@@ -198,15 +198,49 @@ async def run_matching_refresh(uid: str, contexts: list[str] | None = None) -> s
         return None
 
 
-def stream_job_collection(keywords: list[str] | None) -> AsyncGenerator[dict, None]:
-    """Job collection streaming. Yields progress events."""
+async def stream_job_collection(
+    keywords: list[str] | None,
+) -> AsyncGenerator[dict, None]:
+    """Job collection streaming.
+
+    The ADK agent only performs Web search (Gemini API forbids combining
+    google_search with custom tools). After it returns the search result
+    text, this wrapper invokes parse + Firestore storage in the backend
+    and yields a final summary event.
+    """
     runner = _get_job_collector_runner()
     kw_text = "、".join(keywords) if keywords else "デフォルトキーワード"
-    return stream_agent_events(
+
+    final_text: str = ""
+    async for evt in stream_agent_events(
         runner,
         user_id="system",
         message=f"以下のキーワードで求人情報を収集してください: {kw_text}",
-    )
+    ):
+        if evt.get("type") == "final" and evt.get("text"):
+            final_text = evt["text"]
+        yield evt
+
+    if not final_text.strip():
+        yield {"type": "store_skipped", "reason": "search returned empty result"}
+        return
+
+    yield {"type": "store_start", "message": "検索結果を解析中"}
+    try:
+        from agent.job_collector.tools import (
+            parse_job_postings,
+            store_jobs_to_firestore,
+        )
+        import asyncio as _asyncio
+
+        parsed_json = await _asyncio.to_thread(parse_job_postings, final_text)
+        store_summary = await _asyncio.to_thread(
+            store_jobs_to_firestore, parsed_json
+        )
+        yield {"type": "store_done", "summary": store_summary}
+    except Exception as e:
+        logger.exception("Job parse/store failed")
+        yield {"type": "error", "message": f"求人保存エラー: {e}"}
 
 
 def stream_matching_refresh(uid: str, contexts: list[str] | None) -> AsyncGenerator[dict, None]:
