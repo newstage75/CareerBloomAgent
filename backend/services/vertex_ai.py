@@ -5,7 +5,8 @@ import logging
 from typing import AsyncIterator
 
 import vertexai
-from vertexai.generative_models import Content, GenerationConfig, GenerativeModel, Part
+from google import genai
+from google.genai import types as genai_types
 from vertexai.language_models import TextEmbeddingModel
 
 from config import settings
@@ -17,8 +18,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _initialised = False
-_chat_model: GenerativeModel | None = None
 _embedding_model: TextEmbeddingModel | None = None
+_genai_client: genai.Client | None = None
 
 SYSTEM_INSTRUCTION = (
     "あなたは「CareerBloomAgent」のAIキャリアアドバイザーです。\n"
@@ -98,7 +99,7 @@ _MODE_PROMPTS: dict[str, str] = {
 
 
 def _ensure_initialised() -> None:
-    global _initialised, _chat_model, _embedding_model
+    global _initialised, _embedding_model, _genai_client
     if _initialised:
         return
 
@@ -107,11 +108,12 @@ def _ensure_initialised() -> None:
         location=settings.vertex_ai_location,
     )
 
-    _chat_model = GenerativeModel(
-        "gemini-2.5-flash",
-        system_instruction=SYSTEM_INSTRUCTION,
-    )
     _embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+    _genai_client = genai.Client(
+        vertexai=True,
+        project=settings.gcp_project_id,
+        location=settings.vertex_ai_location,
+    )
     _initialised = True
 
 
@@ -125,47 +127,50 @@ async def generate_chat_response(
     user_message: str,
     mode: str | None = None,
 ) -> AsyncIterator[str]:
-    """Yield text chunks from Gemini using streaming."""
+    """Yield text chunks from Gemini using streaming.
+
+    google-genai SDK 経由で thinking_config を適用し、思考プロセスが
+    本文に混入しないようにする (vertexai SDK 1.149.0 は thinking_config 未対応)。
+    """
     _ensure_initialised()
-    assert _chat_model is not None
+    assert _genai_client is not None
 
     system_prompt = _MODE_PROMPTS.get(mode, SYSTEM_INSTRUCTION) if mode else SYSTEM_INSTRUCTION
 
-    # Use a mode-specific model instance when a non-default prompt is needed
-    if system_prompt != SYSTEM_INSTRUCTION:
-        model = GenerativeModel(
-            "gemini-2.5-flash",
-            system_instruction=system_prompt,
-        )
-    else:
-        model = _chat_model
-
-    contents: list[Content] = []
+    contents: list[genai_types.Content] = []
     for msg in history:
         role = "user" if msg["role"] == "user" else "model"
-        contents.append(Content(role=role, parts=[Part.from_text(msg["content"])]))
-
-    # チャットモード (discover/vision) は思考なし（レスポンス速度優先）
-    gen_config = None
-    if mode in ("discover", "vision"):
-        try:
-            gen_config = GenerationConfig(
-                thinking_config={"thinking_budget": 0},
+        contents.append(
+            genai_types.Content(
+                role=role,
+                parts=[genai_types.Part.from_text(text=msg["content"])],
             )
-        except TypeError:
-            # ライブラリバージョンが thinking_config 未対応の場合はスキップ
-            gen_config = None
-
-    chat = model.start_chat(history=contents)
-    response = await chat.send_message_async(
-        user_message, stream=True, generation_config=gen_config
+        )
+    contents.append(
+        genai_types.Content(
+            role="user",
+            parts=[genai_types.Part.from_text(text=user_message)],
+        )
     )
 
-    async for chunk in response:
+    # 全モードで thinking 無効化（思考プロセスがテキスト本文に混入する事故を防ぐ）
+    config = genai_types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+    )
+
+    stream = await _genai_client.aio.models.generate_content_stream(
+        model="gemini-2.5-flash",
+        contents=contents,
+        config=config,
+    )
+
+    async for chunk in stream:
         if not chunk.candidates:
             continue
-        for part in chunk.candidates[0].content.parts:
-            # 思考部分はスキップし、最終レスポンスのみ返す
+        parts = chunk.candidates[0].content.parts or []
+        for part in parts:
+            # 念のため: thought フラグが立っているパーツはスキップ
             if getattr(part, "thought", False):
                 continue
             if part.text:
