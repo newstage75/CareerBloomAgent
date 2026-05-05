@@ -10,7 +10,7 @@ const categoryStyles: Record<ValueChangeCategory, { dot: string; badge: string; 
 
 const sourceLabels: Record<string, string> = {
   discover: "価値観発見",
-  vision: "将来設計",
+  vision: "やりたいこと・目標",
 };
 
 export default function HistoryTimelineEntry({ entry }: { entry: ValueChangeEntry }) {

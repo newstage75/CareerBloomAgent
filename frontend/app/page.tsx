@@ -67,12 +67,12 @@ export default function Home() {
           ctaLabel="対話を始める"
         />
         <JourneyCard
-          title="将来設計"
-          description="キャリアビジョンを描き、具体的なアクションプランを考えます"
+          title="やりたいこと・目標"
+          description="人生でやりたいこと・叶えたい目標をどんどん書き出します"
           href="/vision"
           icon={<HiOutlineRocketLaunch className="h-6 w-6 text-sky-600" />}
           accentColorClass="bg-sky-100"
-          ctaLabel="ビジョンを描く"
+          ctaLabel="目標を書き出す"
         />
         <JourneyCard
           title="マイ・インサイト"

@@ -35,7 +35,7 @@ const navGroups: NavGroup[] = [
     heading: "ジャーニー",
     items: [
       { href: "/discover", label: "価値観発見", icon: HiOutlineSparkles },
-      { href: "/vision", label: "将来設計", icon: HiOutlineRocketLaunch },
+      { href: "/vision", label: "やりたいこと・目標", icon: HiOutlineRocketLaunch },
       { href: "/insights", label: "マイ・インサイト", icon: HiOutlineLightBulb },
       { href: "/history", label: "価値観の変遷", icon: HiOutlineClock },
     ],

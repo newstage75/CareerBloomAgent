@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   HiOutlineBriefcase,
   HiOutlineMagnifyingGlass,
   HiOutlineClock,
+  HiOutlineCpuChip,
 } from "react-icons/hi2";
-import { apiFetch } from "../lib/api";
+import { apiFetch, streamMatchingRefresh } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { MatchResult } from "../types";
 
@@ -21,7 +22,7 @@ const SEARCH_CONTEXTS: SearchContext[] = [
   { label: "スキル", key: "skills", description: "登録済みスキルをベースに検索" },
   { label: "やりたいこと", key: "bucket_list", description: "人生で成し遂げたいことをベースに検索" },
   { label: "やりたくないこと", key: "never_list", description: "避けたいことを除外条件に検索" },
-  { label: "キャリアプラン", key: "vision", description: "将来設計ビジョンをベースに検索" },
+  { label: "キャリアプラン", key: "vision", description: "やりたいこと・目標をベースに検索" },
 ];
 
 type SearchHistoryEntry = {
@@ -30,6 +31,23 @@ type SearchHistoryEntry = {
   results_count: number;
   searched_at: string;
   results: MatchResult[];
+};
+
+type ProgressEntry = {
+  id: number;
+  label: string;
+  detail?: string;
+  elapsed: number;
+  kind: "status" | "tool_call" | "tool_response" | "thinking" | "error";
+};
+
+const PIPELINE_TOTAL_SEC = 90;
+
+const PHASE_LABEL: Record<string, string> = {
+  starting: "調査を開始",
+  collecting_jobs: "求人を収集中",
+  matching: "マッチングを計算中",
+  fallback: "フォールバック計算に切り替え",
 };
 
 function scoreColor(score: number) {
@@ -47,8 +65,12 @@ export default function MatchingPage() {
   const [selectedContexts, setSelectedContexts] = useState<string[]>(["values", "skills"]);
   const [history, setHistory] = useState<SearchHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
-  const searchStartedAt = useRef<string | null>(null);
+
+  const [progress, setProgress] = useState<ProgressEntry[]>([]);
+  const [currentPhase, setCurrentPhase] = useState<string>("");
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const tickRef = useRef<NodeJS.Timeout | null>(null);
+  const progressIdRef = useRef(0);
 
   useEffect(() => {
     if (!user) {
@@ -69,66 +91,109 @@ export default function MatchingPage() {
       .finally(() => setLoading(false));
   }, [user]);
 
-  // Cleanup polling on unmount
   useEffect(() => {
     return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (tickRef.current) clearInterval(tickRef.current);
     };
   }, []);
 
-  const pollForResults = useCallback(() => {
-    const startedAt = searchStartedAt.current;
-    const timeoutAt = Date.now() + 90_000; // 90秒でタイムアウト
-    let pollCount = 0;
-    pollingRef.current = setInterval(async () => {
-      pollCount++;
-      // タイムアウト
-      if (Date.now() > timeoutAt) {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        pollingRef.current = null;
-        setSearching(false);
-        setError("調査がタイムアウトしました。時間をおいて再度お試しください。");
-        return;
-      }
-      try {
-        const status = await apiFetch<{ has_results: boolean; count: number; latest_at: string | null }>(
-          "/api/matching/status"
-        );
-        // Check if we got new results (after search started)
-        if (status.has_results && status.latest_at && startedAt && status.latest_at > startedAt) {
-          // Fetch full results
+  const pushProgress = (entry: Omit<ProgressEntry, "id">) => {
+    progressIdRef.current += 1;
+    const id = progressIdRef.current;
+    setProgress((prev) => [...prev, { id, ...entry }]);
+  };
+
+  const handleSearch = async () => {
+    if (searching || selectedContexts.length === 0) return;
+    setSearching(true);
+    setError(null);
+    setProgress([]);
+    setCurrentPhase("starting");
+    setElapsedSec(0);
+    progressIdRef.current = 0;
+
+    const startedAt = Date.now();
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
+    }, 250);
+
+    await streamMatchingRefresh(selectedContexts, {
+      onStatus: (data) => {
+        setCurrentPhase(data.phase);
+        const baseLabel = PHASE_LABEL[data.phase] ?? data.message;
+        const detail = data.keywords?.length
+          ? `キーワード: ${data.keywords.join(" / ")}`
+          : undefined;
+        pushProgress({ label: baseLabel, detail, elapsed: data.elapsed, kind: "status" });
+      },
+      onAgent: (data) => {
+        if (data.type === "tool_call") {
+          const argSummary = data.args
+            ? Object.entries(data.args)
+                .map(([k, v]) => {
+                  const s = typeof v === "string" ? v : JSON.stringify(v);
+                  return `${k}=${s.slice(0, 30)}`;
+                })
+                .join(", ")
+            : "";
+          pushProgress({
+            label: `🔧 ${data.name ?? "ツール"} 呼び出し`,
+            detail: argSummary || undefined,
+            elapsed: data.elapsed,
+            kind: "tool_call",
+          });
+        } else if (data.type === "tool_response") {
+          pushProgress({
+            label: `↩ ${data.name ?? "ツール"} 応答`,
+            detail: data.summary,
+            elapsed: data.elapsed,
+            kind: "tool_response",
+          });
+        } else if (data.type === "thinking" && data.text) {
+          pushProgress({
+            label: "💭 思考中",
+            detail: data.text.slice(0, 200),
+            elapsed: data.elapsed,
+            kind: "thinking",
+          });
+        } else if (data.type === "error") {
+          pushProgress({
+            label: `⚠ ${data.agent} エラー`,
+            detail: data.message,
+            elapsed: data.elapsed,
+            kind: "error",
+          });
+        }
+      },
+      onDone: async (data) => {
+        if (tickRef.current) {
+          clearInterval(tickRef.current);
+          tickRef.current = null;
+        }
+        setElapsedSec(Math.floor(data.elapsed));
+        try {
           const [matchData, historyData] = await Promise.all([
             apiFetch<MatchResult[]>("/api/matching"),
             apiFetch<{ entries: SearchHistoryEntry[] }>("/api/matching/history"),
           ]);
           setResults(matchData);
           setHistory(historyData.entries);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "結果の取得に失敗しました");
+        } finally {
           setSearching(false);
-          if (pollingRef.current) clearInterval(pollingRef.current);
-          pollingRef.current = null;
         }
-      } catch {
-        // Silently retry on polling errors
-      }
-    }, 5000);
-  }, []);
-
-  const handleSearch = async () => {
-    if (searching || selectedContexts.length === 0) return;
-    setSearching(true);
-    setError(null);
-    searchStartedAt.current = new Date().toISOString();
-    try {
-      await apiFetch("/api/matching/refresh", {
-        method: "POST",
-        body: JSON.stringify({ contexts: selectedContexts }),
-      });
-      // Start polling for results
-      pollForResults();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "調査に失敗しました");
-      setSearching(false);
-    }
+      },
+      onError: (err) => {
+        if (tickRef.current) {
+          clearInterval(tickRef.current);
+          tickRef.current = null;
+        }
+        setError(err.message);
+        setSearching(false);
+      },
+    });
   };
 
   const toggleContext = (key: string) => {
@@ -148,7 +213,6 @@ export default function MatchingPage() {
         </div>
       </div>
 
-      {/* Search context selector */}
       {user && (
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <p className="mb-3 text-sm font-medium text-gray-700">
@@ -180,7 +244,9 @@ export default function MatchingPage() {
               <HiOutlineMagnifyingGlass
                 className={`h-4 w-4 ${searching ? "animate-pulse" : ""}`}
               />
-              {searching ? "調査中..." : "調査する"}
+              {searching
+                ? `調査中…（${elapsedSec}秒/${PIPELINE_TOTAL_SEC}秒）`
+                : "調査する"}
             </button>
             <button
               type="button"
@@ -194,20 +260,59 @@ export default function MatchingPage() {
         </div>
       )}
 
-      {/* Searching status */}
       {searching && (
-        <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-center">
-          <div className="mb-2 flex items-center justify-center gap-2">
-            <HiOutlineMagnifyingGlass className="h-5 w-5 animate-pulse text-indigo-600" />
-            <p className="text-sm font-medium text-indigo-700">調査結果待ちです</p>
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <HiOutlineCpuChip className="h-5 w-5 animate-pulse text-indigo-600" />
+              <p className="text-sm font-medium text-indigo-700">
+                {PHASE_LABEL[currentPhase] ?? "調査中"}
+              </p>
+            </div>
+            <p className="font-mono text-xs text-indigo-600">
+              {elapsedSec}秒 / {PIPELINE_TOTAL_SEC}秒
+            </p>
           </div>
-          <p className="text-xs text-indigo-500">
-            Web検索とマッチング計算を実行しています。しばらくお待ちください...
-          </p>
+          <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-indigo-100">
+            <div
+              className="h-full rounded-full bg-indigo-500 transition-[width] duration-300"
+              style={{
+                width: `${Math.min(100, (elapsedSec / PIPELINE_TOTAL_SEC) * 100)}%`,
+              }}
+            />
+          </div>
+          {progress.length > 0 && (
+            <ul className="max-h-60 space-y-1.5 overflow-y-auto rounded-md bg-white/60 p-3 text-xs text-gray-700">
+              {progress.slice(-30).map((p) => (
+                <li key={p.id} className="flex items-start gap-2">
+                  <span className="shrink-0 font-mono text-[10px] text-indigo-400">
+                    {p.elapsed.toFixed(1)}s
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <span
+                      className={
+                        p.kind === "error"
+                          ? "text-red-600"
+                          : p.kind === "tool_call"
+                          ? "text-indigo-700"
+                          : p.kind === "thinking"
+                          ? "text-amber-700"
+                          : "text-gray-800"
+                      }
+                    >
+                      {p.label}
+                    </span>
+                    {p.detail && (
+                      <p className="truncate text-[11px] text-gray-500">{p.detail}</p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
-      {/* Search history panel */}
       {showHistory && history.length > 0 && (
         <div className="rounded-lg border border-gray-200 bg-white">
           <div className="border-b border-gray-100 px-4 py-2">
@@ -250,7 +355,6 @@ export default function MatchingPage() {
         </div>
       )}
 
-      {/* Results */}
       {loading ? (
         <p className="text-center text-sm text-gray-400">読み込み中...</p>
       ) : !searching && results.length === 0 ? (
