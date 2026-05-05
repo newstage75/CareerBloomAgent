@@ -196,18 +196,41 @@ async def get_matches(uid: str) -> list[dict]:
     return matches
 
 
-async def save_matches(uid: str, matches: list[dict]) -> None:
-    """Replace all match documents for a user."""
+async def save_matches(uid: str, matches: list[dict], contexts: list[str] | None = None) -> None:
+    """Replace latest matches AND append to search history."""
     db = _get_db()
+    now = datetime.now(timezone.utc)
     ref = db.collection("users").document(uid).collection("matches")
 
-    # Delete existing matches
+    # Delete existing latest matches
     async for doc in ref.stream():
         await doc.reference.delete()
 
-    # Write new ones
+    # Write new latest
     for match in matches:
         await ref.document().set(match)
+
+    # Append to search history (accumulative)
+    history_ref = db.collection("users").document(uid).collection("search_history")
+    await history_ref.document().set({
+        "contexts": contexts or [],
+        "results": matches,
+        "results_count": len(matches),
+        "searched_at": now,
+    })
+
+
+async def get_search_history(uid: str, limit: int = 20) -> list[dict]:
+    """Get past search history entries (newest first)."""
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection("search_history")
+    query = ref.order_by("searched_at", direction=firestore_module.Query.DESCENDING).limit(limit)
+    entries: list[dict] = []
+    async for doc in query.stream():
+        entry = doc.to_dict()
+        entry["id"] = doc.id
+        entries.append(entry)
+    return entries
 
 
 # ---------------------------------------------------------------------------

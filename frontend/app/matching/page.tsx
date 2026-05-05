@@ -24,11 +24,12 @@ const SEARCH_CONTEXTS: SearchContext[] = [
   { label: "キャリアプラン", key: "vision", description: "将来設計ビジョンをベースに検索" },
 ];
 
-type SearchHistory = {
+type SearchHistoryEntry = {
   id: string;
-  context: string[];
+  contexts: string[];
   results_count: number;
   searched_at: string;
+  results: MatchResult[];
 };
 
 function scoreColor(score: number) {
@@ -44,7 +45,7 @@ export default function MatchingPage() {
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedContexts, setSelectedContexts] = useState<string[]>(["values", "skills"]);
-  const [history, setHistory] = useState<SearchHistory[]>([]);
+  const [history, setHistory] = useState<SearchHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
@@ -54,8 +55,14 @@ export default function MatchingPage() {
       return;
     }
     setLoading(true);
-    apiFetch<MatchResult[]>("/api/matching")
-      .then(setResults)
+    Promise.all([
+      apiFetch<MatchResult[]>("/api/matching"),
+      apiFetch<{ entries: SearchHistoryEntry[] }>("/api/matching/history"),
+    ])
+      .then(([matchData, historyData]) => {
+        setResults(matchData);
+        setHistory(historyData.entries);
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [user]);
@@ -136,6 +143,43 @@ export default function MatchingPage() {
               <HiOutlineClock className="h-4 w-4" />
               過去の調査
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Search history panel */}
+      {showHistory && history.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white">
+          <div className="border-b border-gray-100 px-4 py-2">
+            <p className="text-sm font-medium text-gray-700">過去の調査履歴</p>
+          </div>
+          <div className="max-h-60 overflow-y-auto">
+            {history.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => {
+                  setResults(entry.results || []);
+                  setShowHistory(false);
+                }}
+                className="flex w-full items-center justify-between border-b border-gray-50 px-4 py-3 text-left text-sm hover:bg-gray-50 last:border-b-0"
+              >
+                <div>
+                  <span className="text-gray-700">
+                    {entry.contexts.map((c) => SEARCH_CONTEXTS.find((sc) => sc.key === c)?.label ?? c).join(", ")}
+                  </span>
+                  <span className="ml-2 text-gray-400">({entry.results_count}件)</span>
+                </div>
+                <span className="shrink-0 text-xs text-gray-400">
+                  {new Date(entry.searched_at).toLocaleDateString("ja-JP", {
+                    month: "numeric",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
       )}

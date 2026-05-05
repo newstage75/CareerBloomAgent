@@ -76,7 +76,7 @@ async def refresh_matches(
             }
             for r in results[:20]
         ]
-        await firestore.save_matches(user.uid, match_docs)
+        await firestore.save_matches(user.uid, match_docs, contexts=contexts)
 
     # Return saved matches regardless of which path was taken
     now = datetime.now(timezone.utc)
@@ -93,3 +93,13 @@ async def refresh_matches(
         )
         for m in saved
     ]
+
+
+@router.get("/history")
+async def get_matching_history(
+    limit: int = 20,
+    user: UserInfo = Depends(get_current_user),
+):
+    """Get past search history."""
+    entries = await firestore.get_search_history(user.uid, limit=limit)
+    return {"entries": entries}
