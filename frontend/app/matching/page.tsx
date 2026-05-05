@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   HiOutlineBriefcase,
   HiOutlineMagnifyingGlass,
@@ -47,6 +47,8 @@ export default function MatchingPage() {
   const [selectedContexts, setSelectedContexts] = useState<string[]>(["values", "skills"]);
   const [history, setHistory] = useState<SearchHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const searchStartedAt = useRef<string | null>(null);
 
   useEffect(() => {
     if (!user) {
@@ -67,19 +69,64 @@ export default function MatchingPage() {
       .finally(() => setLoading(false));
   }, [user]);
 
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
+  const pollForResults = useCallback(() => {
+    const startedAt = searchStartedAt.current;
+    const timeoutAt = Date.now() + 90_000; // 90秒でタイムアウト
+    let pollCount = 0;
+    pollingRef.current = setInterval(async () => {
+      pollCount++;
+      // タイムアウト
+      if (Date.now() > timeoutAt) {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        pollingRef.current = null;
+        setSearching(false);
+        setError("調査がタイムアウトしました。時間をおいて再度お試しください。");
+        return;
+      }
+      try {
+        const status = await apiFetch<{ has_results: boolean; count: number; latest_at: string | null }>(
+          "/api/matching/status"
+        );
+        // Check if we got new results (after search started)
+        if (status.has_results && status.latest_at && startedAt && status.latest_at > startedAt) {
+          // Fetch full results
+          const [matchData, historyData] = await Promise.all([
+            apiFetch<MatchResult[]>("/api/matching"),
+            apiFetch<{ entries: SearchHistoryEntry[] }>("/api/matching/history"),
+          ]);
+          setResults(matchData);
+          setHistory(historyData.entries);
+          setSearching(false);
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+      } catch {
+        // Silently retry on polling errors
+      }
+    }, 5000);
+  }, []);
+
   const handleSearch = async () => {
     if (searching || selectedContexts.length === 0) return;
     setSearching(true);
     setError(null);
+    searchStartedAt.current = new Date().toISOString();
     try {
-      const data = await apiFetch<MatchResult[]>("/api/matching/refresh", {
+      await apiFetch("/api/matching/refresh", {
         method: "POST",
         body: JSON.stringify({ contexts: selectedContexts }),
       });
-      setResults(data);
+      // Start polling for results
+      pollForResults();
     } catch (err) {
       setError(err instanceof Error ? err.message : "調査に失敗しました");
-    } finally {
       setSearching(false);
     }
   };
@@ -147,6 +194,19 @@ export default function MatchingPage() {
         </div>
       )}
 
+      {/* Searching status */}
+      {searching && (
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-center">
+          <div className="mb-2 flex items-center justify-center gap-2">
+            <HiOutlineMagnifyingGlass className="h-5 w-5 animate-pulse text-indigo-600" />
+            <p className="text-sm font-medium text-indigo-700">調査結果待ちです</p>
+          </div>
+          <p className="text-xs text-indigo-500">
+            Web検索とマッチング計算を実行しています。しばらくお待ちください...
+          </p>
+        </div>
+      )}
+
       {/* Search history panel */}
       {showHistory && history.length > 0 && (
         <div className="rounded-lg border border-gray-200 bg-white">
@@ -193,13 +253,13 @@ export default function MatchingPage() {
       {/* Results */}
       {loading ? (
         <p className="text-center text-sm text-gray-400">読み込み中...</p>
-      ) : results.length === 0 ? (
+      ) : !searching && results.length === 0 ? (
         <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
           <p className="text-sm text-gray-500">
             調査結果がまだありません。上のボタンから調査を開始してください。
           </p>
         </div>
-      ) : (
+      ) : !searching && results.length > 0 ? (
         <>
           <h2 className="text-sm font-medium text-gray-500">
             調査結果（{results.length}件）
@@ -213,16 +273,16 @@ export default function MatchingPage() {
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
                   <HiOutlineBriefcase className="h-5 w-5" />
                 </div>
-                <div className="flex-1">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-semibold text-gray-900">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-gray-900 break-words">
                         {result.position}
                       </h3>
                       <p className="text-sm text-gray-500">{result.company}</p>
                     </div>
                     <span
-                      className={`rounded-full px-3 py-1 text-sm font-bold ${scoreColor(result.score)}`}
+                      className={`shrink-0 rounded-full px-3 py-1 text-sm font-bold ${scoreColor(result.score)}`}
                     >
                       {result.score}%
                     </span>
@@ -247,7 +307,7 @@ export default function MatchingPage() {
             ))}
           </ul>
         </>
-      )}
+      ) : null}
     </div>
   );
 }
