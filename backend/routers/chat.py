@@ -69,11 +69,15 @@ async def chat(body: ChatRequest, user: UserInfo = Depends(get_current_user)):
 
 
 @router.get("/sessions", response_model=list[ChatSession])
-async def get_sessions(user: UserInfo = Depends(get_current_user)):
-    sessions = await firestore.get_chat_sessions(user.uid)
+async def get_sessions(
+    mode: str | None = None,
+    user: UserInfo = Depends(get_current_user),
+):
+    sessions = await firestore.get_chat_sessions(user.uid, mode=mode)
     return [
         ChatSession(
             id=s["id"],
+            mode=s.get("mode"),
             messages=[
                 {"role": m["role"], "content": m["content"]}
                 for m in s.get("messages", [])

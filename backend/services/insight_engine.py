@@ -191,15 +191,11 @@ async def _record_value_changes(uid: str, new_insights: dict) -> None:
             "source": "discover",
         })
 
-    # Removed values
+    # NOTE: 価値観の削除はユーザーが明示的に行う（自動削除しない）
+    # AI再生成で消えた価値観は、既存のものにマージして保持する
     for label in old_labels - new_labels:
         old_value = next(v for v in old_insights["values"] if v["label"] == label)
-        await add_value_history_entry(uid, {
-            "category": "removed",
-            "title": f"「{label}」が価値観から外れた",
-            "description": old_value.get("description", ""),
-            "source": "discover",
-        })
+        new_insights["values"].append(old_value)
 
     # Check for vision changes
     old_vision = old_insights.get("vision", {})

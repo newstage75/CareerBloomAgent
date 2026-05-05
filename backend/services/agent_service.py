@@ -98,14 +98,15 @@ async def run_insight_extraction(uid: str, session_id: str) -> None:
         logger.warning("Insight extraction failed for user %s: %s", uid, e)
 
 
-async def run_matching_refresh(uid: str) -> str | None:
+async def run_matching_refresh(uid: str, contexts: list[str] | None = None) -> str | None:
     """マッチング再計算。"""
     try:
         runner = _get_matching_runner()
+        ctx_text = "、".join(contexts) if contexts else "価値観、スキル"
         result = await _run_agent(
             runner,
             user_id=uid,
-            message=f"ユーザー {uid} のマッチングを再計算してください。",
+            message=f"ユーザー {uid} の求人調査をしてください。ベースにするデータ: {ctx_text}",
         )
         logger.info("Matching refresh completed for user %s", uid)
         return result

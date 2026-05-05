@@ -3,11 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from middleware.auth import get_current_user
 from models.matching import MatchResult
 from models.user import UserInfo
 from services import firestore, matching_engine, agent_service
+
+
+class SearchRequest(BaseModel):
+    contexts: list[str] = ["values", "skills"]
 
 router = APIRouter()
 
@@ -30,11 +35,16 @@ async def get_matches(user: UserInfo = Depends(get_current_user)):
 
 
 @router.post("/refresh", response_model=list[MatchResult])
-async def refresh_matches(user: UserInfo = Depends(get_current_user)):
+async def refresh_matches(
+    body: SearchRequest | None = None,
+    user: UserInfo = Depends(get_current_user),
+):
     """Recompute match scores using ADK matching agent (with fallback)."""
+    contexts = body.contexts if body else ["values", "skills"]
+
     # Try ADK agent first
     try:
-        await agent_service.run_matching_refresh(user.uid)
+        await agent_service.run_matching_refresh(user.uid, contexts=contexts)
     except Exception:
         # Fallback to legacy matching engine
         skills = await firestore.get_skills(user.uid)
