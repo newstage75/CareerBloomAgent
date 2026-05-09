@@ -12,6 +12,7 @@ from services.firestore import (
     save_insights,
 )
 from services.insight_engine import generate_insights
+from services.quota import consume_chat_quota
 
 
 class DeleteValueRequest(BaseModel):
@@ -49,7 +50,7 @@ async def get_user_insights_history(
     return {"entries": entries}
 
 
-@router.post("/insights/generate")
+@router.post("/insights/generate", dependencies=[Depends(consume_chat_quota)])
 async def generate_user_insights(user: UserInfo = Depends(get_current_user)):
     try:
         insights = await generate_insights(user.uid)
