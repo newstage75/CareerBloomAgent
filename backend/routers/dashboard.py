@@ -13,26 +13,24 @@ router = APIRouter()
 async def get_dashboard(user: UserInfo = Depends(get_current_user)):
     """Aggregate dashboard data for the authenticated user."""
     skills = await firestore.get_skills(user.uid)
-    matches = await firestore.get_matches(user.uid)
+    roadmaps = await firestore.get_roadmaps(user.uid)
     sessions = await firestore.get_chat_sessions(user.uid)
-
-    top_score = max((m.get("score", 0) for m in matches), default=0)
 
     return {
         "skills_count": len(skills),
-        "top_match_score": top_score,
+        "roadmaps_count": len(roadmaps),
         "chat_sessions_count": len(sessions),
         "recent_skills": [
             {"id": s["id"], "name": s["name"], "level": s["level"]}
             for s in skills[:5]
         ],
-        "top_matches": [
+        "recent_roadmaps": [
             {
-                "id": m["id"],
-                "company": m.get("company", ""),
-                "position": m.get("position", ""),
-                "score": m.get("score", 0),
+                "id": r["id"],
+                "goal_text": r.get("goal_text", ""),
+                "goal_summary": r.get("goal_summary", ""),
+                "generated_at": r.get("generated_at"),
             }
-            for m in matches[:3]
+            for r in roadmaps[:3]
         ],
     }

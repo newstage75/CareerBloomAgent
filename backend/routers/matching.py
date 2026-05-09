@@ -1,63 +1,110 @@
+"""深掘りエージェントβ: 目標→ロードマップ・スキル・YouTube候補の生成
+
+URL は ``/api/matching`` を流用しているが、機能は完全に再開発されている
+（旧: 求人マッチング → 新: キャリアロードマップ深掘り）。
+"""
+
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+import re
 import time
-from datetime import datetime, timezone
+import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 from middleware.auth import get_current_user
-from models.matching import MatchResult
 from models.user import UserInfo
-from services import firestore, matching_engine, agent_service
+from services import firestore, agent_service
+from services.quota import consume_chat_quota, consume_deep_research_quota
 
 logger = logging.getLogger(__name__)
 
-
-class SearchRequest(BaseModel):
-    contexts: list[str] = ["values", "skills"]
-
-
-# Total budget for the search pipeline (job collection + matching combined).
-# Frontend displays "(x秒/PIPELINE_TIMEOUT_SEC秒)".
-PIPELINE_TIMEOUT_SEC = 90
+PIPELINE_TIMEOUT_SEC = 180
 
 router = APIRouter()
 
 
-@router.get("", response_model=list[MatchResult])
-async def get_matches(user: UserInfo = Depends(get_current_user)):
-    matches = await firestore.get_matches(user.uid)
-    return [
-        MatchResult(
-            id=m["id"],
-            company=m.get("company", ""),
-            position=m.get("position", ""),
-            score=m.get("score", 0),
-            tags=m.get("tags", []),
-            gap_skills=m.get("gap_skills", []),
-            calculated_at=m.get("calculated_at", datetime.now(timezone.utc)),
-        )
-        for m in matches
-    ]
+class GenerateRoadmapRequest(BaseModel):
+    goal_text: str
+    goal_id: str | None = None  # 既存IDで上書き、未指定なら新規発行
 
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
-@router.post("/refresh")
-async def refresh_matches(
-    body: SearchRequest | None = None,
+_JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _extract_json(text: str) -> dict | None:
+    """Pull the first {...} JSON object out of a text blob (model output)."""
+    if not text:
+        return None
+    stripped = text.strip()
+    # Strip ```json fences if model ignored the no-fence rule
+    if stripped.startswith("```"):
+        stripped = stripped.strip("`")
+        if stripped.startswith("json"):
+            stripped = stripped[4:]
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        m = _JSON_BLOCK_RE.search(stripped)
+        if not m:
+            return None
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+
+
+@router.get("")
+async def list_roadmaps(user: UserInfo = Depends(get_current_user)):
+    return await firestore.get_roadmaps(user.uid)
+
+
+@router.get("/{goal_id}")
+async def get_roadmap_detail(
+    goal_id: str, user: UserInfo = Depends(get_current_user)
+):
+    roadmap = await firestore.get_roadmap(user.uid, goal_id)
+    if not roadmap:
+        raise HTTPException(status_code=404, detail="Roadmap not found")
+    return roadmap
+
+
+@router.delete("/{goal_id}", status_code=204)
+async def delete_roadmap(
+    goal_id: str, user: UserInfo = Depends(get_current_user)
+):
+    deleted = await firestore.delete_roadmap(user.uid, goal_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Roadmap not found")
+    return None
+
+
+@router.post(
+    "/generate",
+    dependencies=[Depends(consume_chat_quota), Depends(consume_deep_research_quota)],
+)
+async def generate_roadmap(
+    body: GenerateRoadmapRequest,
     user: UserInfo = Depends(get_current_user),
 ):
-    """SSE endpoint: streams pipeline progress and final results."""
-    contexts = body.contexts if body else ["values", "skills"]
+    """SSE: 目標を1つ選んで送信 → ロードマップ生成のステップを順次配信。
+
+    最終的にFirestore (`users/{uid}/roadmaps/{goal_id}`) に保存し、
+    ``done`` イベントで goal_id を返す。
+    """
     uid = user.uid
+    goal_text = body.goal_text.strip()
+    if not goal_text:
+        raise HTTPException(status_code=400, detail="goal_text is required")
+    goal_id = (body.goal_id or uuid.uuid4().hex)[:60]
 
     async def event_generator():
         started_at = time.monotonic()
@@ -69,95 +116,61 @@ async def refresh_matches(
             "status",
             {
                 "phase": "starting",
-                "message": "調査を開始します",
+                "message": "深掘りを開始します",
                 "elapsed": 0,
                 "total": PIPELINE_TIMEOUT_SEC,
+                "goal_id": goal_id,
             },
         )
 
+        final_text = ""
         try:
-            insights = await firestore.get_insights(uid)
-            keywords = _build_search_keywords(insights, contexts)
-
-            # ── Step 1: Job collection ─────────────────────────────────
-            if keywords:
+            async for evt in agent_service.stream_roadmap_generation(
+                uid, goal_text, goal_id
+            ):
+                if evt.get("type") == "final" and evt.get("text"):
+                    final_text = evt["text"]
                 yield _sse(
-                    "status",
-                    {
-                        "phase": "collecting_jobs",
-                        "message": f"求人を収集中（{len(keywords)}キーワード）",
-                        "keywords": keywords,
-                        "elapsed": elapsed(),
-                        "total": PIPELINE_TIMEOUT_SEC,
-                    },
+                    "agent",
+                    {"agent": "roadmap_advisor", **evt, "elapsed": elapsed()},
                 )
-                try:
-                    async for evt in agent_service.stream_job_collection(keywords):
-                        yield _sse(
-                            "agent",
-                            {"agent": "job_collector", **evt, "elapsed": elapsed()},
-                        )
-                except Exception as e:
-                    logger.warning("Job collection streaming failed: %s", e)
-                    yield _sse(
-                        "agent",
-                        {
-                            "agent": "job_collector",
-                            "type": "error",
-                            "message": str(e),
-                            "elapsed": elapsed(),
-                        },
-                    )
-
-            # ── Step 2: Matching ───────────────────────────────────────
-            yield _sse(
-                "status",
-                {
-                    "phase": "matching",
-                    "message": "マッチングを計算中",
-                    "elapsed": elapsed(),
-                    "total": PIPELINE_TIMEOUT_SEC,
-                },
-            )
-
-            matching_succeeded = False
-            try:
-                async for evt in agent_service.stream_matching_refresh(uid, contexts):
-                    if evt.get("type") == "final":
-                        matching_succeeded = True
-                    yield _sse(
-                        "agent",
-                        {"agent": "matching_calculator", **evt, "elapsed": elapsed()},
-                    )
-            except Exception as e:
-                logger.warning("Matching streaming failed: %s", e)
-
-            # ── Fallback: legacy embedding-based matching if ADK failed ───
-            if not matching_succeeded:
-                yield _sse(
-                    "status",
-                    {
-                        "phase": "fallback",
-                        "message": "フォールバック計算に切り替え中",
-                        "elapsed": elapsed(),
-                        "total": PIPELINE_TIMEOUT_SEC,
-                    },
-                )
-                await _legacy_matching(uid, contexts)
-
-            # ── Final: load results and send ──────────────────────────
-            matches = await firestore.get_matches(uid)
-            yield _sse(
-                "done",
-                {
-                    "count": len(matches),
-                    "elapsed": elapsed(),
-                    "total": PIPELINE_TIMEOUT_SEC,
-                },
-            )
         except Exception as e:
-            logger.exception("Search pipeline failed for user %s", uid)
+            logger.exception("Roadmap generation failed for user %s", uid)
             yield _sse("error", {"message": str(e), "elapsed": elapsed()})
+            return
+
+        roadmap = _extract_json(final_text)
+        if not roadmap:
+            yield _sse(
+                "error",
+                {
+                    "message": "AIの応答がJSONとして解析できませんでした",
+                    "elapsed": elapsed(),
+                },
+            )
+            return
+
+        roadmap["goal_id"] = goal_id
+        roadmap["goal_text"] = goal_text
+
+        try:
+            await firestore.save_roadmap(uid, goal_id, roadmap)
+        except Exception as e:
+            logger.exception("Failed to save roadmap")
+            yield _sse(
+                "error",
+                {"message": f"保存エラー: {e}", "elapsed": elapsed()},
+            )
+            return
+
+        yield _sse(
+            "done",
+            {
+                "goal_id": goal_id,
+                "elapsed": elapsed(),
+                "total": PIPELINE_TIMEOUT_SEC,
+            },
+        )
 
     return StreamingResponse(
         event_generator(),
@@ -168,92 +181,3 @@ async def refresh_matches(
             "X-Accel-Buffering": "no",
         },
     )
-
-
-async def _legacy_matching(uid: str, contexts: list[str]) -> None:
-    """Fallback embedding-based matching when the ADK agent fails."""
-    skills = await firestore.get_skills(uid)
-    skill_embeddings = [s["embedding"] for s in skills if s.get("embedding")]
-    skill_names = [s["name"] for s in skills]
-    if not skill_embeddings:
-        return
-    jobs = await firestore.get_jobs()
-    if not jobs:
-        return
-    now = datetime.now(timezone.utc)
-    results = matching_engine.calculate_match_scores(skill_embeddings, skill_names, jobs)
-    match_docs = [
-        {
-            "job_id": r["job_id"],
-            "company": r["company"],
-            "position": r["position"],
-            "score": r["score"],
-            "matched_skills": r["matched_skills"],
-            "gap_skills": r["gap_skills"],
-            "tags": r["tags"],
-            "calculated_at": now,
-        }
-        for r in results[:20]
-    ]
-    await firestore.save_matches(uid, match_docs, contexts=contexts)
-
-
-def _build_search_keywords(insights: dict | None, contexts: list[str]) -> list[str]:
-    """Build search keywords from user insights and selected contexts."""
-    keywords = []
-
-    if not insights:
-        return ["エンジニア 求人", "IT 転職"]
-
-    if "values" in contexts:
-        for value in insights.get("values", [])[:3]:
-            label = value.get("label", "")
-            if label:
-                keywords.append(f"{label} 求人")
-
-    if "skills" in contexts:
-        keywords.append("IT エンジニア 求人")
-
-    if "bucket_list" in contexts:
-        bucket = insights.get("bucket_list", [])
-        for item in bucket[:2]:
-            text = item.get("text", "") if isinstance(item, dict) else str(item)
-            if text:
-                keywords.append(f"{text[:20]} キャリア")
-
-    if "never_list" in contexts:
-        keywords.append("ワークライフバランス 求人")
-
-    if "vision" in contexts:
-        vision = insights.get("vision", {})
-        if isinstance(vision, dict):
-            for term_key in ("short_term", "mid_term", "long_term"):
-                term = vision.get(term_key, "")
-                if term:
-                    keywords.append(f"{term[:20]} 求人")
-
-    if not keywords:
-        keywords = ["転職 求人"]
-
-    return keywords[:5]
-
-
-@router.get("/status")
-async def get_search_status(user: UserInfo = Depends(get_current_user)):
-    """Check if new results are available (for polling)."""
-    matches = await firestore.get_matches(user.uid)
-    return {
-        "has_results": len(matches) > 0,
-        "count": len(matches),
-        "latest_at": matches[0].get("calculated_at") if matches else None,
-    }
-
-
-@router.get("/history")
-async def get_matching_history(
-    limit: int = 20,
-    user: UserInfo = Depends(get_current_user),
-):
-    """Get past search history."""
-    entries = await firestore.get_search_history(user.uid, limit=limit)
-    return {"entries": entries}

@@ -64,22 +64,9 @@ def get_insights(user_id: str) -> dict | None:
 def save_insights(user_id: str, insights: dict) -> None:
     """Save insights to latest AND append to history."""
     db = _get_db()
-    # Overwrite latest
-    (
-        db.collection("users")
-        .document(user_id)
-        .collection("insights")
-        .document("latest")
-        .set(insights)
-    )
-    # Append to history (accumulative)
-    (
-        db.collection("users")
-        .document(user_id)
-        .collection("insights_history")
-        .document()
-        .set(insights)
-    )
+    user_ref = db.collection("users").document(user_id)
+    user_ref.collection("insights").document("latest").set(insights)
+    user_ref.collection("insights_history").document().set(insights)
 
 
 # ---------------------------------------------------------------------------
@@ -119,62 +106,15 @@ def get_skills(user_id: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Jobs
+# Roadmaps (深掘りエージェント)
 # ---------------------------------------------------------------------------
 
 
-def get_jobs() -> list[dict]:
-    """Get all jobs from the global jobs collection."""
+def save_roadmap(user_id: str, goal_id: str, roadmap: dict) -> None:
+    """Persist a generated roadmap under users/{uid}/roadmaps/{goal_id}."""
     db = _get_db()
-    jobs: list[dict] = []
-    for doc in db.collection("jobs").stream():
-        job = doc.to_dict()
-        job["id"] = doc.id
-        jobs.append(job)
-    return jobs
-
-
-def store_jobs(jobs: list[dict]) -> dict:
-    """Store jobs with deduplication by source_url. Returns summary."""
-    db = _get_db()
-    ref = db.collection("jobs")
-
-    # Get existing source_urls
-    existing_urls: set[str] = set()
-    for doc in ref.stream():
-        data = doc.to_dict()
-        if url := data.get("source_url"):
-            existing_urls.add(url)
-
-    new_count = 0
-    for job in jobs:
-        if job.get("source_url") in existing_urls:
-            continue
-        job["collected_at"] = datetime.now(timezone.utc)
-        ref.document().set(job)
-        new_count += 1
-
-    return {
-        "total": len(jobs),
-        "new": new_count,
-        "duplicates": len(jobs) - new_count,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Matches
-# ---------------------------------------------------------------------------
-
-
-def save_matches(user_id: str, matches: list[dict]) -> None:
-    """Replace all match documents for a user."""
-    db = _get_db()
-    ref = db.collection("users").document(user_id).collection("matches")
-
-    # Delete existing
-    for doc in ref.stream():
-        doc.reference.delete()
-
-    # Write new
-    for match in matches:
-        ref.document().set(match)
+    roadmap = {**roadmap}
+    roadmap.setdefault("generated_at", datetime.now(timezone.utc))
+    db.collection("users").document(user_id).collection("roadmaps").document(
+        goal_id
+    ).set(roadmap)

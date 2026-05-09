@@ -179,6 +179,26 @@ async def append_chat_messages(
     )
 
 
+async def update_chat_session_title(
+    uid: str, session_id: str, title: str
+) -> bool:
+    """Set/clear the user-defined title on a chat session."""
+    db = _get_db()
+    doc_ref = (
+        db.collection("users")
+        .document(uid)
+        .collection("chat_sessions")
+        .document(session_id)
+    )
+    doc = await doc_ref.get()
+    if not doc.exists:
+        return False
+    await doc_ref.update(
+        {"title": title, "updated_at": datetime.now(timezone.utc)}
+    )
+    return True
+
+
 async def delete_chat_session(uid: str, session_id: str) -> bool:
     db = _get_db()
     doc_ref = (
@@ -195,57 +215,58 @@ async def delete_chat_session(uid: str, session_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Matches
+# Roadmaps (深掘りエージェントβ)
 # ---------------------------------------------------------------------------
 
 
-async def get_matches(uid: str) -> list[dict]:
+async def get_roadmaps(uid: str) -> list[dict]:
+    """List all saved roadmaps for a user (newest first)."""
     db = _get_db()
-    ref = db.collection("users").document(uid).collection("matches")
-    query = ref.order_by("score", direction=firestore_module.Query.DESCENDING).limit(20)
-    matches: list[dict] = []
+    ref = db.collection("users").document(uid).collection("roadmaps")
+    query = ref.order_by("generated_at", direction=firestore_module.Query.DESCENDING)
+    items: list[dict] = []
     async for doc in query.stream():
-        m = doc.to_dict()
-        m["id"] = doc.id
-        matches.append(m)
-    return matches
+        item = doc.to_dict()
+        item["id"] = doc.id
+        items.append(item)
+    return items
 
 
-async def save_matches(uid: str, matches: list[dict], contexts: list[str] | None = None) -> None:
-    """Replace latest matches AND append to search history."""
+async def get_roadmap(uid: str, goal_id: str) -> dict | None:
     db = _get_db()
-    now = datetime.now(timezone.utc)
-    ref = db.collection("users").document(uid).collection("matches")
-
-    # Delete existing latest matches
-    async for doc in ref.stream():
-        await doc.reference.delete()
-
-    # Write new latest
-    for match in matches:
-        await ref.document().set(match)
-
-    # Append to search history (accumulative)
-    history_ref = db.collection("users").document(uid).collection("search_history")
-    await history_ref.document().set({
-        "contexts": contexts or [],
-        "results": matches,
-        "results_count": len(matches),
-        "searched_at": now,
-    })
+    doc = (
+        await db.collection("users")
+        .document(uid)
+        .collection("roadmaps")
+        .document(goal_id)
+        .get()
+    )
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    data["id"] = doc.id
+    return data
 
 
-async def get_search_history(uid: str, limit: int = 20) -> list[dict]:
-    """Get past search history entries (newest first)."""
+async def save_roadmap(uid: str, goal_id: str, roadmap: dict) -> None:
     db = _get_db()
-    ref = db.collection("users").document(uid).collection("search_history")
-    query = ref.order_by("searched_at", direction=firestore_module.Query.DESCENDING).limit(limit)
-    entries: list[dict] = []
-    async for doc in query.stream():
-        entry = doc.to_dict()
-        entry["id"] = doc.id
-        entries.append(entry)
-    return entries
+    payload = {**roadmap}
+    payload.setdefault("generated_at", datetime.now(timezone.utc))
+    await db.collection("users").document(uid).collection("roadmaps").document(
+        goal_id
+    ).set(payload)
+
+
+async def delete_roadmap(uid: str, goal_id: str) -> bool:
+    db = _get_db()
+    doc_ref = (
+        db.collection("users").document(uid).collection("roadmaps").document(goal_id)
+    )
+    doc = await doc_ref.get()
+    if not doc.exists:
+        return False
+    await doc_ref.delete()
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -382,16 +403,3 @@ async def add_value_history_entry(uid: str, entry: dict) -> str:
     return doc_ref.id
 
 
-# ---------------------------------------------------------------------------
-# Jobs
-# ---------------------------------------------------------------------------
-
-
-async def get_jobs() -> list[dict]:
-    db = _get_db()
-    jobs: list[dict] = []
-    async for doc in db.collection("jobs").stream():
-        job = doc.to_dict()
-        job["id"] = doc.id
-        jobs.append(job)
-    return jobs

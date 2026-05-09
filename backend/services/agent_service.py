@@ -21,8 +21,7 @@ _session_service = InMemorySessionService()
 
 # Lazy-loaded runners
 _insight_runner: Runner | None = None
-_matching_runner: Runner | None = None
-_job_collector_runner: Runner | None = None
+_roadmap_runner: Runner | None = None
 
 
 def _get_insight_runner() -> Runner:
@@ -37,28 +36,16 @@ def _get_insight_runner() -> Runner:
     return _insight_runner
 
 
-def _get_matching_runner() -> Runner:
-    global _matching_runner
-    if _matching_runner is None:
-        from agent.matching_calculator.agent import matching_calculator_agent
-        _matching_runner = Runner(
-            agent=matching_calculator_agent,
+def _get_roadmap_runner() -> Runner:
+    global _roadmap_runner
+    if _roadmap_runner is None:
+        from agent.roadmap_advisor.agent import roadmap_advisor_agent
+        _roadmap_runner = Runner(
+            agent=roadmap_advisor_agent,
             app_name=APP_NAME,
             session_service=_session_service,
         )
-    return _matching_runner
-
-
-def _get_job_collector_runner() -> Runner:
-    global _job_collector_runner
-    if _job_collector_runner is None:
-        from agent.job_collector.agent import job_collector_agent
-        _job_collector_runner = Runner(
-            agent=job_collector_agent,
-            app_name=APP_NAME,
-            session_service=_session_service,
-        )
-    return _job_collector_runner
+    return _roadmap_runner
 
 
 async def _run_agent(
@@ -104,7 +91,7 @@ async def stream_agent_events(
 ) -> AsyncGenerator[dict, None]:
     """Run an ADK agent and yield progress events.
 
-    Yields dicts with shape `{"type": "tool_call"|"tool_response"|"thinking"|"final"|"error", ...}`.
+    Yields dicts with shape `{"type": "tool_call"|"tool_response"|"final"|"error", ...}`.
     Callers translate these into SSE frames.
     """
     session = await _session_service.create_session(
@@ -138,6 +125,21 @@ async def stream_agent_events(
                     "name": resp.name,
                     "summary": summary,
                 }
+
+            grounding = getattr(event, "grounding_metadata", None)
+            if grounding:
+                chunks = getattr(grounding, "grounding_chunks", None) or []
+                sources: list[dict] = []
+                for chunk in chunks:
+                    web = getattr(chunk, "web", None)
+                    if web is not None:
+                        title = getattr(web, "title", "") or ""
+                        uri = getattr(web, "uri", "") or ""
+                        if uri:
+                            sources.append({"title": title, "uri": uri})
+                if sources:
+                    yield {"type": "search_sources", "sources": sources}
+
             if (
                 event.content
                 and event.content.parts
@@ -147,8 +149,6 @@ async def stream_agent_events(
                 text = event.content.parts[0].text
                 if event.is_final_response():
                     yield {"type": "final", "text": text}
-                else:
-                    yield {"type": "thinking", "text": text}
     except Exception as exc:
         logger.exception("Agent streaming failed")
         yield {"type": "error", "message": str(exc)}
@@ -174,105 +174,18 @@ async def run_insight_extraction(uid: str, session_id: str) -> None:
         logger.warning("Insight extraction failed for user %s: %s", uid, e)
 
 
-async def run_matching_refresh(uid: str, contexts: list[str] | None = None) -> str | None:
-    """マッチング再計算。30秒タイムアウト。"""
-    try:
-        runner = _get_matching_runner()
-        ctx_text = "、".join(contexts) if contexts else "価値観、スキル"
-        result = await asyncio.wait_for(
-            _run_agent(
-                runner,
-                user_id=uid,
-                message=f"現在のユーザーの求人調査をしてください。ベースにするデータ: {ctx_text}",
-                state={"uid": uid},
-            ),
-            timeout=30.0,
-        )
-        logger.info("Matching refresh completed for user %s", uid)
-        return result
-    except asyncio.TimeoutError:
-        logger.warning("Matching refresh timed out for user %s", uid)
-        return None
-    except Exception as e:
-        logger.warning("Matching refresh failed for user %s: %s", uid, e)
-        return None
-
-
-async def stream_job_collection(
-    keywords: list[str] | None,
+def stream_roadmap_generation(
+    uid: str, goal_text: str, goal_id: str
 ) -> AsyncGenerator[dict, None]:
-    """Job collection streaming.
-
-    The ADK agent only performs Web search (Gemini API forbids combining
-    google_search with custom tools). After it returns the search result
-    text, this wrapper invokes parse + Firestore storage in the backend
-    and yields a final summary event.
-    """
-    runner = _get_job_collector_runner()
-    kw_text = "、".join(keywords) if keywords else "デフォルトキーワード"
-
-    final_text: str = ""
-    async for evt in stream_agent_events(
-        runner,
-        user_id="system",
-        message=f"以下のキーワードで求人情報を収集してください: {kw_text}",
-    ):
-        if evt.get("type") == "final" and evt.get("text"):
-            final_text = evt["text"]
-        yield evt
-
-    if not final_text.strip():
-        yield {"type": "store_skipped", "reason": "search returned empty result"}
-        return
-
-    yield {"type": "store_start", "message": "検索結果を解析中"}
-    try:
-        from agent.job_collector.tools import (
-            parse_job_postings,
-            store_jobs_to_firestore,
-        )
-        import asyncio as _asyncio
-
-        parsed_json = await _asyncio.to_thread(parse_job_postings, final_text)
-        store_summary = await _asyncio.to_thread(
-            store_jobs_to_firestore, parsed_json
-        )
-        yield {"type": "store_done", "summary": store_summary}
-    except Exception as e:
-        logger.exception("Job parse/store failed")
-        yield {"type": "error", "message": f"求人保存エラー: {e}"}
-
-
-def stream_matching_refresh(uid: str, contexts: list[str] | None) -> AsyncGenerator[dict, None]:
-    """Matching refresh streaming. Yields progress events."""
-    runner = _get_matching_runner()
-    ctx_text = "、".join(contexts) if contexts else "価値観、スキル"
+    """Stream the roadmap_advisor agent. Yields progress events."""
+    runner = _get_roadmap_runner()
     return stream_agent_events(
         runner,
         user_id=uid,
-        message=f"現在のユーザーの求人調査をしてください。ベースにするデータ: {ctx_text}",
-        state={"uid": uid},
+        message=(
+            f"以下の目標について、ロードマップ・足りないスキル・鍛えること・"
+            f"学習用YouTube動画候補を構造化して提案してください。\n\n"
+            f"目標: {goal_text}"
+        ),
+        state={"uid": uid, "goal_id": goal_id, "goal_text": goal_text},
     )
-
-
-async def run_job_collection(keywords: list[str] | None = None) -> str | None:
-    """求人収集バッチ実行。30秒タイムアウト。"""
-    try:
-        runner = _get_job_collector_runner()
-        kw_text = "、".join(keywords) if keywords else "デフォルトキーワード"
-        result = await asyncio.wait_for(
-            _run_agent(
-                runner,
-                user_id="system",
-                message=f"以下のキーワードで求人情報を収集してください: {kw_text}",
-            ),
-            timeout=30.0,
-        )
-        logger.info("Job collection completed")
-        return result
-    except asyncio.TimeoutError:
-        logger.warning("Job collection timed out")
-        return None
-    except Exception as e:
-        logger.warning("Job collection failed: %s", e)
-        return None
