@@ -2,7 +2,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import auth, chat, dashboard, health, history, insights, jobs, matching, skills
+from routers import (
+    auth,
+    chat,
+    dashboard,
+    health,
+    history,
+    insights,
+    matching,
+    public_config,
+    skills,
+)
 
 app = FastAPI(
     title="CareerBloomAgent API",
@@ -26,5 +36,5 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(matching.router, prefix="/api/matching", tags=["matching"])
 app.include_router(insights.router, prefix="/api", tags=["insights"])
 app.include_router(history.router, prefix="/api", tags=["history"])
-app.include_router(jobs.router, prefix="/api", tags=["jobs"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(public_config.router, prefix="/api", tags=["public"])
