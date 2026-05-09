@@ -4,6 +4,7 @@ import "./globals.css";
 import Header from "./components/Header";
 import Sidebar from "./components/Sidebar";
 import Providers from "./components/Providers";
+import GuestBanner from "./components/GuestBanner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -33,6 +34,7 @@ export default function RootLayout({
       <body className="flex h-full flex-col font-sans antialiased">
         <Providers>
           <Header />
+          <GuestBanner />
           <div className="flex flex-1 overflow-hidden">
             <Sidebar />
             <main className="flex-1 overflow-y-auto p-6">{children}</main>
