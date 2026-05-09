@@ -20,6 +20,11 @@ class ChatMessage(BaseModel):
 class ChatSession(BaseModel):
     id: str
     mode: str | None = None  # "discover" | "vision"
+    title: str | None = None
     messages: list[ChatMessage]
     created_at: datetime
     updated_at: datetime
+
+
+class UpdateChatSessionTitleRequest(BaseModel):
+    title: str

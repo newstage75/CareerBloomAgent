@@ -8,15 +8,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 
 from middleware.auth import get_current_user
-from models.chat import ChatRequest, ChatSession
+from models.chat import ChatRequest, ChatSession, UpdateChatSessionTitleRequest
 from models.user import UserInfo
 from services import firestore, vertex_ai, agent_service
+from services.quota import consume_chat_quota
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(consume_chat_quota)])
 async def chat(body: ChatRequest, user: UserInfo = Depends(get_current_user)):
     """Send a message and receive a streaming SSE response from Gemini."""
     session_id, history = await firestore.get_or_create_chat_session(
@@ -78,6 +79,7 @@ async def get_sessions(
         ChatSession(
             id=s["id"],
             mode=s.get("mode"),
+            title=s.get("title"),
             messages=[
                 {"role": m["role"], "content": m["content"]}
                 for m in s.get("messages", [])
@@ -87,6 +89,21 @@ async def get_sessions(
         )
         for s in sessions
     ]
+
+
+@router.patch("/sessions/{session_id}")
+async def update_session_title(
+    session_id: str,
+    body: UpdateChatSessionTitleRequest,
+    user: UserInfo = Depends(get_current_user),
+):
+    title = body.title.strip()[:80]  # cap at 80 chars to keep storage tidy
+    updated = await firestore.update_chat_session_title(
+        user.uid, session_id, title
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"id": session_id, "title": title}
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
