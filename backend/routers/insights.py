@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from middleware.auth import get_current_user
 from models.user import UserInfo
+from services import vertex_ai
 from services.firestore import (
     add_value_history_entry,
     get_insights,
@@ -28,6 +29,10 @@ class StarListItemRequest(BaseModel):
     list_name: str  # "bucket_list" | "never_list"
     item_id: str
     starred: bool
+
+
+class EditVisionRequest(BaseModel):
+    instruction: str
 
 router = APIRouter()
 
@@ -85,6 +90,46 @@ async def delete_value(
         "description": target.get("description", ""),
         "source": "discover",
     })
+
+    return insights
+
+
+@router.post(
+    "/insights/vision/edit",
+    dependencies=[Depends(consume_chat_quota)],
+)
+async def edit_vision(
+    body: EditVisionRequest,
+    user: UserInfo = Depends(get_current_user),
+):
+    """ユーザーの自然言語指示でビジョン（短期/中期/長期）を書き換える。"""
+    instruction = body.instruction.strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="instruction が空です")
+
+    insights = await get_insights(user.uid)
+    if not insights:
+        raise HTTPException(
+            status_code=404,
+            detail="先に「価値観発見」「やりたいこと・目標」で対話してインサイトを作成してください",
+        )
+
+    current_vision = insights.get("vision") or {}
+    new_vision = await vertex_ai.edit_vision_with_instruction(
+        current_vision, instruction
+    )
+    insights["vision"] = new_vision
+    await save_insights(user.uid, insights)
+
+    await add_value_history_entry(
+        user.uid,
+        {
+            "category": "vision_updated",
+            "title": "ビジョンを編集",
+            "description": instruction[:200],
+            "source": "vision",
+        },
+    )
 
     return insights
 

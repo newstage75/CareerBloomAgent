@@ -137,6 +137,28 @@ export default function InsightsPage() {
     }
   };
 
+  const [visionInstruction, setVisionInstruction] = useState("");
+  const [visionEditing, setVisionEditing] = useState(false);
+  const handleEditVision = async () => {
+    const instruction = visionInstruction.trim();
+    if (!instruction || visionEditing) return;
+    setVisionEditing(true);
+    try {
+      const data = await apiFetch<ApiInsightsResponse>("/api/insights/vision/edit", {
+        method: "POST",
+        body: JSON.stringify({ instruction }),
+      });
+      if (!("status" in data)) {
+        setInsights(mapApiToInsights(data));
+      }
+      setVisionInstruction("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "ビジョンの編集に失敗しました");
+    } finally {
+      setVisionEditing(false);
+    }
+  };
+
   const handleGenerate = async () => {
     try {
       setGenerating(true);
@@ -290,6 +312,38 @@ export default function InsightsPage() {
         icon={<HiOutlineRocketLaunch className="h-5 w-5" />}
       >
         <VisionTimeline {...insights.vision} />
+        {canUse && (
+          <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              AIに指示してビジョンを編集
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={visionInstruction}
+                onChange={(e) => setVisionInstruction(e.target.value)}
+                placeholder="例: 中期目標を「副業で月10万」に変更して"
+                disabled={visionEditing}
+                className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-60"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleEditVision();
+                }}
+              />
+              <button
+                type="button"
+                onClick={handleEditVision}
+                disabled={visionEditing || !visionInstruction.trim()}
+                className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                <HiOutlineSparkles className="h-4 w-4" />
+                {visionEditing ? "編集中..." : "編集"}
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-gray-500">
+              指示が一部のフィールドだけに言及している場合、他は元のまま残ります
+            </p>
+          </div>
+        )}
       </InsightSection>
 
       <InsightSection

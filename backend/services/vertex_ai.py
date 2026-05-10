@@ -184,6 +184,64 @@ async def generate_chat_response(
 # ---------------------------------------------------------------------------
 
 
+async def edit_vision_with_instruction(
+    current_vision: dict, instruction: str
+) -> dict:
+    """ユーザーの自然言語指示を解釈して短期/中期/長期ビジョンを書き換える。
+
+    返り値は ``{"short_term", "mid_term", "long_term"}`` のみを含む dict。
+    指示が一部のみに言及していても、未言及のフィールドは元の値を保持する。
+    """
+    _ensure_initialised()
+    assert _genai_client is not None
+
+    system_prompt = (
+        "あなたはユーザーのキャリアビジョンを管理するAIです。"
+        "ユーザーの自然言語の指示を解釈し、短期/中期/長期のビジョンを書き換えてください。"
+        "指示が一部のフィールドのみに言及している場合、他のフィールドは現在の値をそのまま残してください。"
+        "出力は JSON のみ。コードフェンスや前置きは付けない。"
+        '\n\n出力フォーマット:\n{"short_term": "...", "mid_term": "...", "long_term": "..."}'
+    )
+
+    user_msg = (
+        f"現在のビジョン:\n"
+        f"- 短期: {current_vision.get('short_term', '') or '（未設定）'}\n"
+        f"- 中期: {current_vision.get('mid_term', '') or '（未設定）'}\n"
+        f"- 長期: {current_vision.get('long_term', '') or '（未設定）'}\n\n"
+        f"指示:\n{instruction}"
+    )
+
+    config = genai_types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+        response_mime_type="application/json",
+    )
+
+    resp = await _genai_client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            genai_types.Content(
+                role="user", parts=[genai_types.Part.from_text(text=user_msg)]
+            )
+        ],
+        config=config,
+    )
+
+    import json
+
+    raw = resp.text or "{}"
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = {}
+
+    return {
+        "short_term": parsed.get("short_term", current_vision.get("short_term", "")),
+        "mid_term": parsed.get("mid_term", current_vision.get("mid_term", "")),
+        "long_term": parsed.get("long_term", current_vision.get("long_term", "")),
+    }
+
+
 async def get_embedding(text: str) -> list[float]:
     _ensure_initialised()
     assert _embedding_model is not None
