@@ -183,7 +183,7 @@ def stream_roadmap_generation(
         runner,
         user_id=uid,
         message=(
-            f"以下の目標について、ロードマップ・足りないスキル・鍛えること・"
+            f"以下の目標について、ロードマップ・必要なスキル・鍛えること・"
             f"学習用YouTube動画候補を構造化して提案してください。\n\n"
             f"目標: {goal_text}"
         ),

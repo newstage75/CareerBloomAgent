@@ -246,7 +246,7 @@ export default function MatchingPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">深掘りエージェントβ</h1>
           <p className="mt-1 text-sm text-gray-500">
-            やりたいこと・目標を1つ選ぶと、ロードマップ・足りないスキル・鍛えること・参考になるYouTubeを提案します
+            やりたいこと・目標を1つ選ぶと、ロードマップ・必要なスキル・鍛えること・参考になるYouTubeを提案します
           </p>
         </div>
       </div>
@@ -471,7 +471,7 @@ export default function MatchingPage() {
           {activeRoadmap.missing_skills && activeRoadmap.missing_skills.length > 0 && (
             <Section
               icon={<HiOutlineAcademicCap className="h-5 w-5 text-amber-600" />}
-              title="足りないスキル"
+              title="必要なスキル"
             >
               <ul className="space-y-2">
                 {activeRoadmap.missing_skills.map((s, i) => (
