@@ -60,20 +60,44 @@ export type SkillResponse = {
   created_at: string;
 };
 
-export type ValueAlignment = {
-  summary: string;
-  score: number;
+export type RoadmapStep = {
+  title: string;
+  description: string;
+  duration: string;
 };
 
-export type MatchResult = {
+export type MissingSkill = {
+  name: string;
+  reason: string;
+  priority: "high" | "medium" | "low";
+};
+
+export type TrainingAction = {
+  title: string;
+  how: string;
+  frequency: string;
+};
+
+export type YoutubeSuggestion = {
+  title: string;
+  url: string;
+  why: string;
+};
+
+export type Roadmap = {
   id: string;
-  company: string;
-  position: string;
-  score: number;
-  tags: string[];
-  gap_skills: string[];
-  value_alignment: ValueAlignment | null;
-  calculated_at: string;
+  goal_id?: string;
+  goal_text: string;
+  goal_summary?: string;
+  roadmap?: {
+    short_term: RoadmapStep[];
+    mid_term: RoadmapStep[];
+    long_term: RoadmapStep[];
+  };
+  missing_skills?: MissingSkill[];
+  training_actions?: TrainingAction[];
+  youtube_suggestions?: YoutubeSuggestion[];
+  generated_at: string;
 };
 
 export type JourneyProgress = {
@@ -82,11 +106,18 @@ export type JourneyProgress = {
   insights_generated: boolean;
 };
 
+export type RecentRoadmap = {
+  id: string;
+  goal_text: string;
+  goal_summary: string;
+  generated_at: string;
+};
+
 export type DashboardData = {
   skills_count: number;
-  top_match_score: number;
+  roadmaps_count: number;
   chat_sessions_count: number;
   journey: JourneyProgress;
   recent_skills: SkillResponse[];
-  top_matches: MatchResult[];
+  recent_roadmaps: RecentRoadmap[];
 };

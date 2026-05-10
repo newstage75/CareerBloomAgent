@@ -2,94 +2,113 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  HiOutlineBriefcase,
-  HiOutlineMagnifyingGlass,
+  HiOutlineSparkles,
+  HiOutlineMap,
+  HiOutlineAcademicCap,
+  HiOutlineFire,
+  HiOutlinePlayCircle,
   HiOutlineClock,
+  HiOutlineTrash,
   HiOutlineCpuChip,
 } from "react-icons/hi2";
-import { apiFetch, streamMatchingRefresh } from "../lib/api";
+import { apiFetch, streamRoadmapGenerate } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { MatchResult } from "../types";
+import { usePublicConfig } from "../lib/config";
+import type {
+  Roadmap,
+  RoadmapStep,
+  MissingSkill,
+  UserInsights,
+} from "../types";
 
-type SearchContext = {
-  label: string;
-  key: string;
-  description: string;
-};
-
-const SEARCH_CONTEXTS: SearchContext[] = [
-  { label: "価値観", key: "values", description: "大切にしている価値観をベースに検索" },
-  { label: "スキル", key: "skills", description: "登録済みスキルをベースに検索" },
-  { label: "やりたいこと", key: "bucket_list", description: "人生で成し遂げたいことをベースに検索" },
-  { label: "やりたくないこと", key: "never_list", description: "避けたいことを除外条件に検索" },
-  { label: "キャリアプラン", key: "vision", description: "やりたいこと・目標をベースに検索" },
-];
-
-type SearchHistoryEntry = {
-  id: string;
-  contexts: string[];
-  results_count: number;
-  searched_at: string;
-  results: MatchResult[];
-};
+type SearchSource = { title: string; uri: string };
 
 type ProgressEntry = {
   id: number;
   label: string;
   detail?: string;
   elapsed: number;
-  kind: "status" | "tool_call" | "tool_response" | "thinking" | "error";
+  kind: "status" | "tool_call" | "tool_response" | "error" | "sources";
+  sources?: SearchSource[];
 };
 
-const PIPELINE_TOTAL_SEC = 90;
-
-const PHASE_LABEL: Record<string, string> = {
-  starting: "調査を開始",
-  collecting_jobs: "求人を収集中",
-  matching: "マッチングを計算中",
-  fallback: "フォールバック計算に切り替え",
+type GoalCandidate = {
+  key: string;
+  label: string;
+  description?: string;
 };
 
-function scoreColor(score: number) {
-  if (score >= 80) return "text-green-600 bg-green-50";
-  if (score >= 60) return "text-yellow-600 bg-yellow-50";
-  return "text-gray-600 bg-gray-50";
+const PIPELINE_TOTAL_SEC = 180;
+
+const PRIORITY_BADGE: Record<MissingSkill["priority"], string> = {
+  high: "bg-rose-50 text-rose-700 border-rose-200",
+  medium: "bg-amber-50 text-amber-700 border-amber-200",
+  low: "bg-slate-50 text-slate-600 border-slate-200",
+};
+
+type ApiInsightsResponse =
+  | { status: "empty"; message: string }
+  | {
+      values: { label: string; description: string }[];
+      vision: { short_term: string; mid_term: string; long_term: string };
+      bucket_list: { id: string; text: string }[];
+    };
+
+function buildGoalCandidates(insights: ApiInsightsResponse | null): GoalCandidate[] {
+  const out: GoalCandidate[] = [];
+  if (!insights || "status" in insights) return out;
+  const v = insights.vision || ({} as UserInsights["vision"]);
+  if (v.short_term) {
+    out.push({ key: "vision-short", label: `短期: ${v.short_term}` });
+  }
+  if (v.mid_term) {
+    out.push({ key: "vision-mid", label: `中期: ${v.mid_term}` });
+  }
+  if (v.long_term) {
+    out.push({ key: "vision-long", label: `長期: ${v.long_term}` });
+  }
+  for (const item of insights.bucket_list ?? []) {
+    out.push({ key: `bucket-${item.id}`, label: item.text });
+  }
+  return out;
 }
 
 export default function MatchingPage() {
   const { user } = useAuth();
-  const [results, setResults] = useState<MatchResult[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searching, setSearching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedContexts, setSelectedContexts] = useState<string[]>(["values", "skills"]);
-  const [history, setHistory] = useState<SearchHistoryEntry[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
+  const { config } = usePublicConfig();
+  const canUse = !!user || !!config?.guest_enabled;
 
+  const [insights, setInsights] = useState<ApiInsightsResponse | null>(null);
+  const [goalCandidates, setGoalCandidates] = useState<GoalCandidate[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [customGoal, setCustomGoal] = useState("");
+
+  const [history, setHistory] = useState<Roadmap[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [activeRoadmap, setActiveRoadmap] = useState<Roadmap | null>(null);
+
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressEntry[]>([]);
-  const [currentPhase, setCurrentPhase] = useState<string>("");
   const [elapsedSec, setElapsedSec] = useState(0);
   const tickRef = useRef<NodeJS.Timeout | null>(null);
   const progressIdRef = useRef(0);
 
   useEffect(() => {
-    if (!user) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    Promise.all([
-      apiFetch<MatchResult[]>("/api/matching"),
-      apiFetch<{ entries: SearchHistoryEntry[] }>("/api/matching/history"),
-    ])
-      .then(([matchData, historyData]) => {
-        setResults(matchData);
-        setHistory(historyData.entries);
+    if (!canUse) return;
+    apiFetch<ApiInsightsResponse>("/api/insights")
+      .then((data) => {
+        setInsights(data);
+        setGoalCandidates(buildGoalCandidates(data));
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [user]);
+      .catch(() => {});
+    apiFetch<Roadmap[]>("/api/matching")
+      .then((data) => {
+        setHistory(data);
+        if (data.length > 0) setActiveRoadmap(data[0]);
+      })
+      .catch(() => {});
+  }, [canUse, user]);
 
   useEffect(() => {
     return () => {
@@ -99,16 +118,23 @@ export default function MatchingPage() {
 
   const pushProgress = (entry: Omit<ProgressEntry, "id">) => {
     progressIdRef.current += 1;
-    const id = progressIdRef.current;
-    setProgress((prev) => [...prev, { id, ...entry }]);
+    setProgress((prev) => [...prev, { id: progressIdRef.current, ...entry }]);
   };
 
-  const handleSearch = async () => {
-    if (searching || selectedContexts.length === 0) return;
-    setSearching(true);
+  const resolvedGoalText = (() => {
+    if (customGoal.trim()) return customGoal.trim();
+    if (!selectedKey) return "";
+    const found = goalCandidates.find((g) => g.key === selectedKey);
+    return found?.label ?? "";
+  })();
+
+  const handleGenerate = async () => {
+    const goalText = resolvedGoalText;
+    if (!goalText || generating) return;
+    setGenerating(true);
     setError(null);
+    setActiveRoadmap(null);
     setProgress([]);
-    setCurrentPhase("starting");
     setElapsedSec(0);
     progressIdRef.current = 0;
 
@@ -118,156 +144,167 @@ export default function MatchingPage() {
       setElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
     }, 250);
 
-    await streamMatchingRefresh(selectedContexts, {
-      onStatus: (data) => {
-        setCurrentPhase(data.phase);
-        const baseLabel = PHASE_LABEL[data.phase] ?? data.message;
-        const detail = data.keywords?.length
-          ? `キーワード: ${data.keywords.join(" / ")}`
-          : undefined;
-        pushProgress({ label: baseLabel, detail, elapsed: data.elapsed, kind: "status" });
-      },
-      onAgent: (data) => {
-        if (data.type === "tool_call") {
-          const argSummary = data.args
-            ? Object.entries(data.args)
-                .map(([k, v]) => {
-                  const s = typeof v === "string" ? v : JSON.stringify(v);
-                  return `${k}=${s.slice(0, 30)}`;
-                })
-                .join(", ")
-            : "";
+    let createdGoalId: string | null = null;
+
+    await streamRoadmapGenerate(
+      { goal_text: goalText },
+      {
+        onStatus: (data) => {
+          if (data.goal_id) createdGoalId = data.goal_id;
           pushProgress({
-            label: `🔧 ${data.name ?? "ツール"} 呼び出し`,
-            detail: argSummary || undefined,
-            elapsed: data.elapsed,
-            kind: "tool_call",
-          });
-        } else if (data.type === "tool_response") {
-          pushProgress({
-            label: `↩ ${data.name ?? "ツール"} 応答`,
-            detail: data.summary,
-            elapsed: data.elapsed,
-            kind: "tool_response",
-          });
-        } else if (data.type === "thinking" && data.text) {
-          pushProgress({
-            label: "💭 思考中",
-            detail: data.text.slice(0, 200),
-            elapsed: data.elapsed,
-            kind: "thinking",
-          });
-        } else if (data.type === "store_start") {
-          pushProgress({
-            label: "📥 求人を解析・保存中",
-            detail: data.message,
+            label: data.message,
             elapsed: data.elapsed,
             kind: "status",
           });
-        } else if (data.type === "store_done") {
-          pushProgress({
-            label: "✅ 求人保存完了",
-            detail: data.summary,
-            elapsed: data.elapsed,
-            kind: "tool_response",
-          });
-        } else if (data.type === "store_skipped") {
-          pushProgress({
-            label: "⏭ 保存スキップ",
-            detail: (data as { reason?: string }).reason,
-            elapsed: data.elapsed,
-            kind: "status",
-          });
-        } else if (data.type === "error") {
-          pushProgress({
-            label: `⚠ ${data.agent} エラー`,
-            detail: data.message,
-            elapsed: data.elapsed,
-            kind: "error",
-          });
-        }
-      },
-      onDone: async (data) => {
-        if (tickRef.current) {
-          clearInterval(tickRef.current);
-          tickRef.current = null;
-        }
-        setElapsedSec(Math.floor(data.elapsed));
-        try {
-          const [matchData, historyData] = await Promise.all([
-            apiFetch<MatchResult[]>("/api/matching"),
-            apiFetch<{ entries: SearchHistoryEntry[] }>("/api/matching/history"),
-          ]);
-          setResults(matchData);
-          setHistory(historyData.entries);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "結果の取得に失敗しました");
-        } finally {
-          setSearching(false);
-        }
-      },
-      onError: (err) => {
-        if (tickRef.current) {
-          clearInterval(tickRef.current);
-          tickRef.current = null;
-        }
-        setError(err.message);
-        setSearching(false);
-      },
-    });
+        },
+        onAgent: (data) => {
+          if (data.type === "tool_call") {
+            pushProgress({
+              label: `🔧 ${data.name ?? "ツール"} 呼び出し`,
+              elapsed: data.elapsed,
+              kind: "tool_call",
+            });
+          } else if (data.type === "tool_response") {
+            pushProgress({
+              label: `↩ ${data.name ?? "ツール"} 応答`,
+              detail: data.summary,
+              elapsed: data.elapsed,
+              kind: "tool_response",
+            });
+          } else if (data.type === "search_sources" && data.sources?.length) {
+            pushProgress({
+              label: `🔗 検索元 ${data.sources.length}件`,
+              elapsed: data.elapsed,
+              kind: "sources",
+              sources: data.sources,
+            });
+          } else if (data.type === "error") {
+            pushProgress({
+              label: `⚠ ${data.agent} エラー`,
+              detail: data.message,
+              elapsed: data.elapsed,
+              kind: "error",
+            });
+          }
+        },
+        onDone: async (data) => {
+          if (tickRef.current) {
+            clearInterval(tickRef.current);
+            tickRef.current = null;
+          }
+          setElapsedSec(Math.floor(data.elapsed));
+          createdGoalId = data.goal_id ?? createdGoalId;
+          try {
+            const list = await apiFetch<Roadmap[]>("/api/matching");
+            setHistory(list);
+            const fresh = list.find((r) => r.id === createdGoalId) ?? list[0];
+            if (fresh) setActiveRoadmap(fresh);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "結果取得に失敗しました");
+          } finally {
+            setGenerating(false);
+          }
+        },
+        onError: (err) => {
+          if (tickRef.current) {
+            clearInterval(tickRef.current);
+            tickRef.current = null;
+          }
+          setError(err.message);
+          setGenerating(false);
+        },
+      }
+    );
   };
 
-  const toggleContext = (key: string) => {
-    setSelectedContexts((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
-    );
+  const handleDeleteRoadmap = async (id: string) => {
+    if (!confirm("このロードマップを削除しますか？")) return;
+    try {
+      await apiFetch(`/api/matching/${id}`, { method: "DELETE" });
+      setHistory((prev) => prev.filter((r) => r.id !== id));
+      if (activeRoadmap?.id === id) setActiveRoadmap(null);
+    } catch (err) {
+      console.error(err);
+      alert("削除に失敗しました");
+    }
+  };
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    return d.toLocaleString("ja-JP", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">お仕事ブラウジングβ</h1>
+          <h1 className="text-2xl font-bold text-gray-900">深掘りエージェントβ</h1>
           <p className="mt-1 text-sm text-gray-500">
-            求人検索・希望職種の調査をサポートします
+            やりたいこと・目標を1つ選ぶと、ロードマップ・足りないスキル・鍛えること・参考になるYouTubeを提案します
           </p>
         </div>
       </div>
 
-      {user && (
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="mb-3 text-sm font-medium text-gray-700">
-            どのデータをベースに調査しますか？
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {SEARCH_CONTEXTS.map((ctx) => (
-              <button
-                key={ctx.key}
-                type="button"
-                onClick={() => toggleContext(ctx.key)}
-                className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                  selectedContexts.includes(ctx.key)
-                    ? "border-indigo-600 bg-indigo-50 text-indigo-700"
-                    : "border-gray-300 text-gray-600 hover:border-gray-400"
-                }`}
-                title={ctx.description}
-              >
-                {ctx.label}
-              </button>
-            ))}
+      {canUse && (
+        <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
+          <div>
+            <p className="mb-2 text-sm font-medium text-gray-700">深掘りしたい目標を選択</p>
+            {goalCandidates.length === 0 && (
+              <p className="text-xs text-gray-500">
+                「価値観発見」「やりたいこと・目標」で対話を進めるか、自由入力で指定してください。
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {goalCandidates.map((g) => (
+                <button
+                  key={g.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedKey(g.key);
+                    setCustomGoal("");
+                  }}
+                  className={`max-w-full truncate rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                    selectedKey === g.key && !customGoal
+                      ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                      : "border-gray-300 text-gray-600 hover:border-gray-400"
+                  }`}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="mt-4 flex items-center gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-500">
+              または自由入力
+            </label>
+            <input
+              type="text"
+              value={customGoal}
+              onChange={(e) => {
+                setCustomGoal(e.target.value);
+                if (e.target.value) setSelectedKey(null);
+              }}
+              placeholder="例: バンジージャンプに挑戦したい"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-3">
             <button
-              onClick={handleSearch}
-              disabled={searching || selectedContexts.length === 0}
+              onClick={handleGenerate}
+              disabled={generating || !resolvedGoalText}
               className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
-              <HiOutlineMagnifyingGlass
-                className={`h-4 w-4 ${searching ? "animate-pulse" : ""}`}
-              />
-              {searching
-                ? `調査中…（${elapsedSec}秒/${PIPELINE_TOTAL_SEC}秒）`
-                : "調査する"}
+              <HiOutlineSparkles className={`h-4 w-4 ${generating ? "animate-pulse" : ""}`} />
+              {generating
+                ? `深掘り中…（${elapsedSec}秒/${PIPELINE_TOTAL_SEC}秒）`
+                : "深掘りする"}
             </button>
             <button
               type="button"
@@ -275,20 +312,18 @@ export default function MatchingPage() {
               className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700"
             >
               <HiOutlineClock className="h-4 w-4" />
-              過去の調査
+              過去のロードマップ ({history.length})
             </button>
           </div>
         </div>
       )}
 
-      {searching && (
+      {generating && (
         <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
-          <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <HiOutlineCpuChip className="h-5 w-5 animate-pulse text-indigo-600" />
-              <p className="text-sm font-medium text-indigo-700">
-                {PHASE_LABEL[currentPhase] ?? "調査中"}
-              </p>
+              <p className="text-sm font-medium text-indigo-700">エージェントが調査中</p>
             </div>
             <p className="font-mono text-xs text-indigo-600">
               {elapsedSec}秒 / {PIPELINE_TOTAL_SEC}秒
@@ -303,7 +338,7 @@ export default function MatchingPage() {
             />
           </div>
           {progress.length > 0 && (
-            <ul className="max-h-60 space-y-1.5 overflow-y-auto rounded-md bg-white/60 p-3 text-xs text-gray-700">
+            <ul className="max-h-48 space-y-1.5 overflow-y-auto rounded-md bg-white/60 p-3 text-xs text-gray-700">
               {progress.slice(-30).map((p) => (
                 <li key={p.id} className="flex items-start gap-2">
                   <span className="shrink-0 font-mono text-[10px] text-indigo-400">
@@ -316,8 +351,6 @@ export default function MatchingPage() {
                           ? "text-red-600"
                           : p.kind === "tool_call"
                           ? "text-indigo-700"
-                          : p.kind === "thinking"
-                          ? "text-amber-700"
                           : "text-gray-800"
                       }
                     >
@@ -325,6 +358,22 @@ export default function MatchingPage() {
                     </span>
                     {p.detail && (
                       <p className="truncate text-[11px] text-gray-500">{p.detail}</p>
+                    )}
+                    {p.sources && (
+                      <ul className="mt-1 space-y-0.5">
+                        {p.sources.slice(0, 5).map((s, i) => (
+                          <li key={i} className="truncate text-[11px]">
+                            <a
+                              href={s.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-indigo-600 hover:underline"
+                            >
+                              {s.title || s.uri}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </div>
                 </li>
@@ -334,105 +383,205 @@ export default function MatchingPage() {
         </div>
       )}
 
-      {showHistory && history.length > 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white">
-          <div className="border-b border-gray-100 px-4 py-2">
-            <p className="text-sm font-medium text-gray-700">過去の調査履歴</p>
-          </div>
-          <div className="max-h-60 overflow-y-auto">
-            {history.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                onClick={() => {
-                  setResults(entry.results || []);
-                  setShowHistory(false);
-                }}
-                className="flex w-full items-center justify-between border-b border-gray-50 px-4 py-3 text-left text-sm hover:bg-gray-50 last:border-b-0"
-              >
-                <div>
-                  <span className="text-gray-700">
-                    {entry.contexts.map((c) => SEARCH_CONTEXTS.find((sc) => sc.key === c)?.label ?? c).join(", ")}
-                  </span>
-                  <span className="ml-2 text-gray-400">({entry.results_count}件)</span>
-                </div>
-                <span className="shrink-0 text-xs text-gray-400">
-                  {new Date(entry.searched_at).toLocaleDateString("ja-JP", {
-                    month: "numeric",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {error && (
-        <div className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
           {error}
         </div>
       )}
 
-      {loading ? (
-        <p className="text-center text-sm text-gray-400">読み込み中...</p>
-      ) : !searching && results.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
-          <p className="text-sm text-gray-500">
-            調査結果がまだありません。上のボタンから調査を開始してください。
-          </p>
-        </div>
-      ) : !searching && results.length > 0 ? (
-        <>
-          <h2 className="text-sm font-medium text-gray-500">
-            調査結果（{results.length}件）
-          </h2>
-          <ul className="space-y-4">
-            {results.map((result) => (
-              <li
-                key={result.id}
-                className="flex items-start gap-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
+      {showHistory && history.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white">
+          {history.map((r) => (
+            <div
+              key={r.id}
+              className={`flex items-center border-b border-gray-100 last:border-b-0 ${
+                r.id === activeRoadmap?.id ? "bg-indigo-50" : ""
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveRoadmap(r)}
+                className="flex flex-1 flex-col px-4 py-3 text-left text-sm hover:bg-gray-50"
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-                  <HiOutlineBriefcase className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-gray-900 break-words">
-                        {result.position}
-                      </h3>
-                      <p className="text-sm text-gray-500">{result.company}</p>
-                    </div>
-                    <span
-                      className={`shrink-0 rounded-full px-3 py-1 text-sm font-bold ${scoreColor(result.score)}`}
-                    >
-                      {result.score}%
-                    </span>
-                  </div>
-                  {result.gap_skills.length > 0 && (
-                    <p className="mt-1.5 text-xs text-amber-600">
-                      不足スキル: {result.gap_skills.join(", ")}
-                    </p>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {result.tags.map((tag) => (
+                <span className="truncate font-medium text-gray-800">
+                  {r.goal_text}
+                </span>
+                {r.goal_summary && (
+                  <span className="truncate text-xs text-gray-500">
+                    {r.goal_summary}
+                  </span>
+                )}
+                <span className="mt-0.5 text-[11px] text-gray-400">
+                  {formatDate(r.generated_at)}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteRoadmap(r.id)}
+                className="px-3 py-3 text-gray-400 hover:text-rose-600"
+                aria-label="削除"
+                title="削除"
+              >
+                <HiOutlineTrash className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeRoadmap && (
+        <div className="space-y-5 rounded-lg border border-gray-200 bg-white p-5">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-indigo-600">
+              深掘り対象
+            </p>
+            <h2 className="mt-1 text-lg font-bold text-gray-900">
+              {activeRoadmap.goal_text}
+            </h2>
+            {activeRoadmap.goal_summary && (
+              <p className="mt-1 text-sm text-gray-500">
+                {activeRoadmap.goal_summary}
+              </p>
+            )}
+          </div>
+
+          {activeRoadmap.roadmap && (
+            <Section
+              icon={<HiOutlineMap className="h-5 w-5 text-sky-600" />}
+              title="ロードマップ"
+            >
+              <RoadmapTimeline
+                steps={activeRoadmap.roadmap.short_term}
+                label="短期"
+                color="bg-sky-500"
+              />
+              <RoadmapTimeline
+                steps={activeRoadmap.roadmap.mid_term}
+                label="中期"
+                color="bg-indigo-500"
+              />
+              <RoadmapTimeline
+                steps={activeRoadmap.roadmap.long_term}
+                label="長期"
+                color="bg-violet-500"
+              />
+            </Section>
+          )}
+
+          {activeRoadmap.missing_skills && activeRoadmap.missing_skills.length > 0 && (
+            <Section
+              icon={<HiOutlineAcademicCap className="h-5 w-5 text-amber-600" />}
+              title="足りないスキル"
+            >
+              <ul className="space-y-2">
+                {activeRoadmap.missing_skills.map((s, i) => (
+                  <li key={i} className="rounded-md border border-gray-200 p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-800">{s.name}</span>
                       <span
-                        key={tag}
-                        className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600"
+                        className={`rounded border px-1.5 py-0.5 text-[10px] ${PRIORITY_BADGE[s.priority]}`}
                       >
-                        {tag}
+                        {s.priority}
                       </span>
-                    ))}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
+                    </div>
+                    <p className="mt-1 text-xs text-gray-600">{s.reason}</p>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {activeRoadmap.training_actions && activeRoadmap.training_actions.length > 0 && (
+            <Section
+              icon={<HiOutlineFire className="h-5 w-5 text-rose-600" />}
+              title="今後鍛えること"
+            >
+              <ul className="space-y-2">
+                {activeRoadmap.training_actions.map((t, i) => (
+                  <li key={i} className="rounded-md border border-gray-200 p-3">
+                    <p className="font-medium text-gray-800">{t.title}</p>
+                    <p className="mt-1 text-xs text-gray-600">{t.how}</p>
+                    <p className="mt-0.5 text-[11px] text-gray-400">頻度: {t.frequency}</p>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {activeRoadmap.youtube_suggestions && activeRoadmap.youtube_suggestions.length > 0 && (
+            <Section
+              icon={<HiOutlinePlayCircle className="h-5 w-5 text-red-600" />}
+              title="参考になるYouTube提案"
+            >
+              <ul className="space-y-2">
+                {activeRoadmap.youtube_suggestions.map((v, i) => (
+                  <li key={i} className="rounded-md border border-gray-200 p-3">
+                    <a
+                      href={v.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-indigo-600 hover:underline"
+                    >
+                      ▶ {v.title}
+                    </a>
+                    <p className="mt-1 text-xs text-gray-600">{v.why}</p>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
+function Section({
+  icon,
+  title,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700">
+        {icon}
+        {title}
+      </h3>
+      <div className="space-y-3">{children}</div>
+    </section>
+  );
+}
+
+function RoadmapTimeline({
+  steps,
+  label,
+  color,
+}: {
+  steps: RoadmapStep[];
+  label: string;
+  color: string;
+}) {
+  if (!steps || steps.length === 0) return null;
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2">
+        <span className={`h-2 w-2 rounded-full ${color}`} />
+        <span className="text-xs font-medium text-gray-600">{label}</span>
+      </div>
+      <ul className="ml-4 space-y-2 border-l border-gray-200 pl-4">
+        {steps.map((s, i) => (
+          <li key={i}>
+            <p className="text-sm font-medium text-gray-800">{s.title}</p>
+            <p className="mt-0.5 text-xs text-gray-600">{s.description}</p>
+            <p className="mt-0.5 text-[11px] text-gray-400">期間: {s.duration}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
