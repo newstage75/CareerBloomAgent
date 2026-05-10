@@ -13,6 +13,7 @@ import {
 } from "react-icons/hi2";
 import type { UserInsights } from "@/app/types";
 import { useAuth } from "@/app/lib/auth";
+import { usePublicConfig } from "@/app/lib/config";
 import { apiFetch } from "@/app/lib/api";
 import InsightSection from "@/app/components/insights/InsightSection";
 import ValueCard from "@/app/components/insights/ValueCard";
@@ -53,10 +54,12 @@ function mapApiToInsights(
   };
 }
 
-const MAX_VALUES_DISPLAY = 5;
+const MAX_VALUES_DISPLAY = 3;
 
 export default function InsightsPage() {
   const { user, loading: authLoading } = useAuth();
+  const { config } = usePublicConfig();
+  const canUse = !!user || !!config?.guest_enabled;
   const [insights, setInsights] = useState<UserInsights | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -64,7 +67,7 @@ export default function InsightsPage() {
   const [showAllValues, setShowAllValues] = useState(false);
 
   useEffect(() => {
-    if (authLoading || !user) return;
+    if (authLoading || !canUse) return;
 
     async function fetchInsights() {
       try {
@@ -90,7 +93,7 @@ export default function InsightsPage() {
     }
 
     fetchInsights();
-  }, [user, authLoading]);
+  }, [canUse, authLoading]);
 
   const handleStarValue = async (label: string, starred: boolean) => {
     try {
@@ -202,7 +205,7 @@ export default function InsightsPage() {
             >
               価値観発見を始める
             </Link>
-            {user && (
+            {canUse && (
               <button
                 type="button"
                 onClick={handleGenerate}

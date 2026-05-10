@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { HiPlus, HiXMark } from "react-icons/hi2";
 import { apiFetch } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { usePublicConfig } from "../lib/config";
 import type { SkillResponse } from "../types";
 
 type SkillLevel = "none" | "beginner" | "intermediate" | "advanced";
@@ -24,6 +25,8 @@ const levelColor = {
 
 export default function SkillsPage() {
   const { user } = useAuth();
+  const { config } = usePublicConfig();
+  const canUse = !!user || !!config?.guest_enabled;
   const [skills, setSkills] = useState<SkillResponse[]>([]);
   const [name, setName] = useState("");
   const [level, setLevel] = useState<SkillLevel>("none");
@@ -32,7 +35,7 @@ export default function SkillsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user) {
+    if (!canUse) {
       setSkills([]);
       setLoading(false);
       return;
@@ -42,7 +45,7 @@ export default function SkillsPage() {
       .then(setSkills)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [user]);
+  }, [canUse, user]);
 
   const handleAdd = async () => {
     const trimmed = name.trim();

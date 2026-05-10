@@ -6,28 +6,31 @@ import {
   HiOutlineRocketLaunch,
   HiOutlineLightBulb,
   HiOutlineAcademicCap,
-  HiOutlineBriefcase,
+  HiOutlineMap,
 } from "react-icons/hi2";
 import DashboardCard from "./components/DashboardCard";
 import JourneyCard from "./components/journey/JourneyCard";
 import JourneyProgress from "./components/journey/JourneyProgress";
 import { apiFetch } from "./lib/api";
 import { useAuth } from "./lib/auth";
+import { usePublicConfig } from "./lib/config";
 import type { JourneyStep, DashboardData } from "./types";
 
 export default function Home() {
   const { user } = useAuth();
+  const { config } = usePublicConfig();
+  const canUse = !!user || !!config?.guest_enabled;
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
 
   useEffect(() => {
-    if (!user) {
+    if (!canUse) {
       setDashboard(null);
       return;
     }
     apiFetch<DashboardData>("/api/dashboard")
       .then(setDashboard)
       .catch(() => {});
-  }, [user]);
+  }, [canUse, user]);
 
   const sessionsCount = dashboard?.chat_sessions_count ?? 0;
 
@@ -38,9 +41,7 @@ export default function Home() {
   ];
 
   const skillsValue = dashboard ? `${dashboard.skills_count} 件` : "0 件";
-  const matchValue = dashboard?.top_match_score
-    ? `${dashboard.top_match_score}%`
-    : "-- %";
+  const roadmapsValue = dashboard ? `${dashboard.roadmaps_count ?? 0} 件` : "0 件";
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
@@ -97,11 +98,11 @@ export default function Home() {
             description="スキルを登録してマッチング精度を上げましょう"
           />
           <DashboardCard
-            title="お仕事ブラウジングβ"
+            title="深掘りエージェントβ"
             href="/matching"
-            icon={<HiOutlineBriefcase className="h-6 w-6" />}
-            value={matchValue}
-            description="求人検索・希望職種の調査をサポートします"
+            icon={<HiOutlineMap className="h-6 w-6" />}
+            value={roadmapsValue}
+            description="やりたいこと・目標を選んで、ロードマップとスキル・YouTubeを提案"
           />
         </div>
       </section>

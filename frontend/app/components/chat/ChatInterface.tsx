@@ -1,10 +1,18 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { HiOutlinePlus, HiOutlineClock, HiOutlineTrash } from "react-icons/hi2";
+import {
+  HiOutlinePlus,
+  HiOutlineClock,
+  HiOutlineTrash,
+  HiOutlinePencilSquare,
+  HiOutlineCheck,
+  HiOutlineXMark,
+} from "react-icons/hi2";
 import type { ChatMessage as ChatMessageType, ChatMode } from "@/app/types";
 import { apiFetch, streamChat } from "@/app/lib/api";
 import { useAuth } from "@/app/lib/auth";
+import { usePublicConfig } from "@/app/lib/config";
 import ChatMessage from "./ChatMessage";
 import ChatInput from "./ChatInput";
 import SuggestedPrompts from "./SuggestedPrompts";
@@ -12,6 +20,7 @@ import SuggestedPrompts from "./SuggestedPrompts";
 type SessionSummary = {
   id: string;
   mode: string | null;
+  title?: string | null;
   messages: { role: string; content: string }[];
   created_at: string;
   updated_at: string;
@@ -33,6 +42,8 @@ export default function ChatInterface({
   suggestedPrompts,
 }: Props) {
   const { user, loading: authLoading } = useAuth();
+  const { config } = usePublicConfig();
+  const canUse = !!user || !!config?.guest_enabled;
   const [messages, setMessages] = useState<ChatMessageType[]>([
     { id: 1, role: "assistant", content: initialGreeting },
   ]);
@@ -42,11 +53,13 @@ export default function ChatInterface({
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingSession, setLoadingSession] = useState(true);
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Load sessions on mount
   useEffect(() => {
-    if (authLoading || !user) {
+    if (authLoading || !canUse) {
       setLoadingSession(false);
       return;
     }
@@ -69,7 +82,7 @@ export default function ChatInterface({
       })
       .catch(() => {})
       .finally(() => setLoadingSession(false));
-  }, [user, authLoading, mode]);
+  }, [canUse, authLoading, mode]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -140,6 +153,41 @@ export default function ChatInterface({
     setShowHistory(false);
   };
 
+  const startEditTitle = (e: React.MouseEvent, s: SessionSummary) => {
+    e.stopPropagation();
+    setEditingTitleId(s.id);
+    const firstUserMsg = s.messages.find((m) => m.role === "user");
+    setTitleDraft(
+      s.title ?? (firstUserMsg ? firstUserMsg.content.slice(0, 40) : "")
+    );
+  };
+
+  const cancelEditTitle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingTitleId(null);
+    setTitleDraft("");
+  };
+
+  const saveTitle = async (e: React.MouseEvent | React.FormEvent, id: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const next = titleDraft.trim().slice(0, 80);
+    try {
+      await apiFetch(`/api/chat/sessions/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: next }),
+      });
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, title: next } : s))
+      );
+      setEditingTitleId(null);
+      setTitleDraft("");
+    } catch (err) {
+      console.error("Failed to update title:", err);
+      alert("タイトルの更新に失敗しました");
+    }
+  };
+
   const handleDeleteSession = async (
     e: React.MouseEvent,
     targetId: string
@@ -203,12 +251,14 @@ export default function ChatInterface({
       </div>
 
       {showHistory && (
-        <div className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+        <div className="mt-3 max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white">
           {sessions.map((s) => {
             const firstUserMsg = s.messages.find((m) => m.role === "user");
-            const preview = firstUserMsg
+            const fallback = firstUserMsg
               ? firstUserMsg.content.slice(0, 50) + (firstUserMsg.content.length > 50 ? "..." : "")
               : "（メッセージなし）";
+            const display = s.title?.trim() ? s.title : fallback;
+            const isEditing = editingTitleId === s.id;
             return (
               <div
                 key={s.id}
@@ -216,25 +266,71 @@ export default function ChatInterface({
                   s.id === sessionId ? "bg-indigo-50" : ""
                 }`}
               >
-                <button
-                  type="button"
-                  onClick={() => handleSelectSession(s)}
-                  className="flex flex-1 items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-gray-50"
-                >
-                  <span className="truncate text-gray-700">{preview}</span>
-                  <span className="ml-3 shrink-0 text-xs text-gray-400">
-                    {formatDate(s.updated_at)}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => handleDeleteSession(e, s.id)}
-                  className="px-3 py-2.5 text-gray-400 hover:text-rose-600"
-                  aria-label="削除"
-                  title="削除"
-                >
-                  <HiOutlineTrash className="h-4 w-4" />
-                </button>
+                {isEditing ? (
+                  <form
+                    onSubmit={(e) => saveTitle(e, s.id)}
+                    className="flex flex-1 items-center gap-2 px-3 py-2"
+                  >
+                    <input
+                      type="text"
+                      value={titleDraft}
+                      onChange={(e) => setTitleDraft(e.target.value)}
+                      maxLength={80}
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
+                      placeholder="タイトル（最大80文字）"
+                    />
+                    <button
+                      type="submit"
+                      className="p-1 text-indigo-600 hover:text-indigo-700"
+                      aria-label="保存"
+                      title="保存"
+                    >
+                      <HiOutlineCheck className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEditTitle}
+                      className="p-1 text-gray-400 hover:text-gray-600"
+                      aria-label="キャンセル"
+                      title="キャンセル"
+                    >
+                      <HiOutlineXMark className="h-4 w-4" />
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectSession(s)}
+                      className="flex flex-1 items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-gray-50"
+                    >
+                      <span className="truncate text-gray-700">{display}</span>
+                      <span className="ml-3 shrink-0 text-xs text-gray-400">
+                        {formatDate(s.updated_at)}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => startEditTitle(e, s)}
+                      className="px-2 py-2.5 text-gray-400 hover:text-indigo-600"
+                      aria-label="タイトル編集"
+                      title="タイトル編集"
+                    >
+                      <HiOutlinePencilSquare className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteSession(e, s.id)}
+                      className="px-3 py-2.5 text-gray-400 hover:text-rose-600"
+                      aria-label="削除"
+                      title="削除"
+                    >
+                      <HiOutlineTrash className="h-4 w-4" />
+                    </button>
+                  </>
+                )}
               </div>
             );
           })}

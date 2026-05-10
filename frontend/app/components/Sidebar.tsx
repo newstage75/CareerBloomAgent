@@ -9,7 +9,7 @@ import {
   HiOutlineLightBulb,
   HiOutlineClock,
   HiOutlineAcademicCap,
-  HiOutlineBriefcase,
+  HiOutlineMap,
 } from "react-icons/hi2";
 import type { ComponentType } from "react";
 
@@ -44,7 +44,7 @@ const navGroups: NavGroup[] = [
     heading: "ツール",
     items: [
       { href: "/skills", label: "スキル", icon: HiOutlineAcademicCap },
-      { href: "/matching", label: "お仕事ブラウジングβ", icon: HiOutlineBriefcase },
+      { href: "/matching", label: "深掘りエージェントβ", icon: HiOutlineMap },
     ],
   },
 ];

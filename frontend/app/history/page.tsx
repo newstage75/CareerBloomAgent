@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ValueChangeEntry } from "../types";
 import { useAuth } from "../lib/auth";
+import { usePublicConfig } from "../lib/config";
 import { apiFetch } from "../lib/api";
 import HistoryTimeline from "../components/history/HistoryTimeline";
 
@@ -21,11 +22,13 @@ type HistoryResponse = {
 
 export default function HistoryPage() {
   const { user, loading: authLoading } = useAuth();
+  const { config } = usePublicConfig();
+  const canUse = !!user || !!config?.guest_enabled;
   const [entries, setEntries] = useState<ValueChangeEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (authLoading || !user) {
+    if (authLoading || !canUse) {
       setLoading(false);
       return;
     }
@@ -35,7 +38,9 @@ export default function HistoryPage() {
         setEntries(
           data.entries.map((e) => ({
             id: e.id,
-            date: e.date ? new Date(e.date).toLocaleDateString("ja-JP") : "",
+            date: e.date
+              ? `${new Date(e.date).toLocaleDateString("ja-JP")} ${new Date(e.date).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`
+              : "",
             category: e.category as ValueChangeEntry["category"],
             title: e.title,
             description: e.description,
@@ -45,7 +50,7 @@ export default function HistoryPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [user, authLoading]);
+  }, [canUse, authLoading]);
 
   if (authLoading || loading) {
     return (
