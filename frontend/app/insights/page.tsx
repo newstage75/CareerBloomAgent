@@ -322,7 +322,7 @@ export default function InsightsPage() {
                 type="text"
                 value={visionInstruction}
                 onChange={(e) => setVisionInstruction(e.target.value)}
-                placeholder="例: 中期目標を「副業で月10万」に変更して"
+                placeholder="例: 3-5年後に独立するにして"
                 disabled={visionEditing}
                 className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-60"
                 onKeyDown={(e) => {
