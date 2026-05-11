@@ -6,12 +6,15 @@ URL は ``/api/matching`` を流用しているが、機能は完全に再開発
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import time
 import uuid
+from urllib.parse import urlencode
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
@@ -38,6 +41,41 @@ def _sse(event: str, data: dict) -> str:
 
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+_YOUTUBE_ID_RE = re.compile(
+    r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([A-Za-z0-9_-]{11})"
+)
+
+
+async def _verify_youtube_url(client: httpx.AsyncClient, url: str) -> bool:
+    """oEmbed APIで動画が公開・埋め込み可能か検証する。
+
+    YouTube oEmbedは公開動画のみ200を返し、限定公開・削除・年齢制限などは
+    404/401を返すので、ユーザーが「この動画は再生できません」になるケースを
+    かなり弾ける。
+    """
+    m = _YOUTUBE_ID_RE.search(url)
+    if not m:
+        return False
+    canonical = f"https://www.youtube.com/watch?v={m.group(1)}"
+    oembed = "https://www.youtube.com/oembed?" + urlencode(
+        {"url": canonical, "format": "json"}
+    )
+    try:
+        resp = await client.get(oembed, timeout=5.0)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def _filter_valid_youtube(suggestions: list[dict]) -> list[dict]:
+    """無効なYouTube URLを除外する。並列で検証してレイテンシを抑える。"""
+    if not suggestions:
+        return []
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(
+            *[_verify_youtube_url(client, s.get("url", "")) for s in suggestions]
+        )
+    return [s for s, ok in zip(suggestions, results) if ok]
 
 
 def _extract_json(text: str) -> dict | None:
@@ -152,6 +190,20 @@ async def generate_roadmap(
 
         roadmap["goal_id"] = goal_id
         roadmap["goal_text"] = goal_text
+
+        # YouTube URLが実際に再生可能か検証して、ダメなものは外す
+        yt = roadmap.get("youtube_suggestions") or []
+        if yt:
+            yield _sse(
+                "status",
+                {
+                    "phase": "verifying_youtube",
+                    "message": f"YouTube動画を検証中（{len(yt)}件）",
+                    "elapsed": elapsed(),
+                    "total": PIPELINE_TIMEOUT_SEC,
+                },
+            )
+            roadmap["youtube_suggestions"] = await _filter_valid_youtube(yt)
 
         try:
             await firestore.save_roadmap(uid, goal_id, roadmap)
