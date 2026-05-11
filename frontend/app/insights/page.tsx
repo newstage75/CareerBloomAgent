@@ -326,7 +326,10 @@ export default function InsightsPage() {
                 disabled={visionEditing}
                 className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-60"
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleEditVision();
+                  if (e.key !== "Enter") return;
+                  // IME変換中（日本語入力の確定キーなど）は送信しない
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                  handleEditVision();
                 }}
               />
               <button
