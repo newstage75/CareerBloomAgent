@@ -4,9 +4,21 @@ export type ChatMessage = {
   id: number;
   role: ChatRole;
   content: string;
+  liked?: boolean;
+  serverIdx?: number;
 };
 
-export type ChatMode = "discover" | "vision";
+export type ChatMode = "discover" | "vision" | "sparring";
+
+export type SparringNote = {
+  id: string;
+  title: string;
+  summary: string;
+  body: string;
+  related_questions: string[];
+  source_pair_count?: number;
+  generated_at: string;
+};
 
 export type ValueItem = {
   label: string;
@@ -117,6 +129,7 @@ export type DashboardData = {
   skills_count: number;
   roadmaps_count: number;
   chat_sessions_count: number;
+  sparring_notes_count: number;
   journey: JourneyProgress;
   recent_skills: SkillResponse[];
   recent_roadmaps: RecentRoadmap[];

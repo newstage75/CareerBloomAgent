@@ -21,7 +21,7 @@ type SessionSummary = {
   id: string;
   mode: string | null;
   title?: string | null;
-  messages: { role: string; content: string }[];
+  messages: { role: string; content: string; liked?: boolean }[];
   created_at: string;
   updated_at: string;
 };
@@ -76,6 +76,8 @@ export default function ChatInterface({
               id: i + 1,
               role: m.role as "user" | "assistant",
               content: m.content,
+              liked: m.liked,
+              serverIdx: i,
             }))
           );
         }
@@ -92,17 +94,31 @@ export default function ChatInterface({
     const text = input.trim();
     if (!text || isStreaming) return;
 
+    // 既存メッセージのうち server に保存されているものの最大idx を求める
+    const maxServerIdx = messages.reduce(
+      (max, m) => (m.serverIdx !== undefined ? Math.max(max, m.serverIdx) : max),
+      -1
+    );
+    const userServerIdx = maxServerIdx + 1;
+    const assistantServerIdx = maxServerIdx + 2;
+
     const userMsg: ChatMessageType = {
       id: Date.now(),
       role: "user",
       content: text,
+      serverIdx: userServerIdx,
     };
 
     const assistantId = Date.now() + 1;
     setMessages((prev) => [
       ...prev,
       userMsg,
-      { id: assistantId, role: "assistant", content: "" },
+      {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        serverIdx: assistantServerIdx,
+      },
     ]);
     setInput("");
     setIsStreaming(true);
@@ -148,9 +164,35 @@ export default function ChatInterface({
         id: i + 1,
         role: m.role as "user" | "assistant",
         content: m.content,
+        liked: m.liked,
+        serverIdx: i,
       }))
     );
     setShowHistory(false);
+  };
+
+  const handleToggleLike = async (message: ChatMessageType) => {
+    if (message.serverIdx === undefined || !sessionId) return;
+    const nextLiked = !message.liked;
+    // 楽観更新
+    setMessages((prev) =>
+      prev.map((m) => (m.id === message.id ? { ...m, liked: nextLiked } : m))
+    );
+    try {
+      await apiFetch(
+        `/api/chat/sessions/${sessionId}/messages/${message.serverIdx}/like`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ liked: nextLiked }),
+        }
+      );
+    } catch (err) {
+      // 失敗したら戻す
+      setMessages((prev) =>
+        prev.map((m) => (m.id === message.id ? { ...m, liked: !nextLiked } : m))
+      );
+      console.error("Failed to toggle like:", err);
+    }
   };
 
   const startEditTitle = (e: React.MouseEvent, s: SessionSummary) => {
@@ -346,7 +388,17 @@ export default function ChatInterface({
           <>
             <div className="flex-1 space-y-4 overflow-y-auto p-4">
               {messages.map((msg) => (
-                <ChatMessage key={msg.id} role={msg.role} content={msg.content} />
+                <ChatMessage
+                  key={msg.id}
+                  role={msg.role}
+                  content={msg.content}
+                  liked={msg.liked}
+                  onToggleLike={
+                    mode === "sparring" && msg.role === "assistant" && msg.serverIdx !== undefined
+                      ? () => handleToggleLike(msg)
+                      : undefined
+                  }
+                />
               ))}
               {isStreaming && messages[messages.length - 1]?.content === "" && (
                 <div className="flex justify-start">
