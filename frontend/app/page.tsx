@@ -5,7 +5,7 @@ import {
   HiOutlineSparkles,
   HiOutlineRocketLaunch,
   HiOutlineLightBulb,
-  HiOutlineAcademicCap,
+  HiOutlineBookOpen,
   HiOutlineMap,
 } from "react-icons/hi2";
 import DashboardCard from "./components/DashboardCard";
@@ -40,17 +40,17 @@ export default function Home() {
     { label: "インサイト", description: "まとめを確認", completed: sessionsCount >= 5 },
   ];
 
-  const skillsValue = dashboard ? `${dashboard.skills_count} 件` : "0 件";
+  const notesValue = dashboard ? `${dashboard.sparring_notes_count ?? 0} 件` : "0 件";
   const roadmapsValue = dashboard ? `${dashboard.roadmaps_count ?? 0} 件` : "0 件";
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
       <div className="text-center">
         <h1 className="text-2xl font-bold text-gray-900">
-          価値観を深掘り、キャリアに花を咲かせる
+          あなたの『軸』を、言葉にする
         </h1>
         <p className="mt-2 text-sm text-gray-500">
-          AIとの対話を通じて、自分の価値観を発見し、理想のキャリアを描きましょう
+          思考のパートナーとしてのAIと、価値観や目標を整理します
         </p>
       </div>
 
@@ -91,18 +91,18 @@ export default function Home() {
         </h2>
         <div className="grid gap-5 sm:grid-cols-2">
           <DashboardCard
-            title="スキル"
-            href="/skills"
-            icon={<HiOutlineAcademicCap className="h-6 w-6" />}
-            value={skillsValue}
-            description="スキルを登録してマッチング精度を上げましょう"
-          />
-          <DashboardCard
             title="深掘りエージェントβ"
             href="/matching"
             icon={<HiOutlineMap className="h-6 w-6" />}
             value={roadmapsValue}
             description="やりたいこと・目標を選んで、ロードマップとスキル・YouTubeを提案"
+          />
+          <DashboardCard
+            title="知識ノートβ"
+            href="/sparring/notes"
+            icon={<HiOutlineBookOpen className="h-6 w-6" />}
+            value={notesValue}
+            description="知識の壁打ちで💡を付けた応答からAIがノートを編纂します"
           />
         </div>
       </section>

@@ -15,11 +15,13 @@ async def get_dashboard(user: UserInfo = Depends(get_current_user)):
     skills = await firestore.get_skills(user.uid)
     roadmaps = await firestore.get_roadmaps(user.uid)
     sessions = await firestore.get_chat_sessions(user.uid)
+    sparring_notes = await firestore.get_sparring_notes(user.uid)
 
     return {
         "skills_count": len(skills),
         "roadmaps_count": len(roadmaps),
         "chat_sessions_count": len(sessions),
+        "sparring_notes_count": len(sparring_notes),
         "recent_skills": [
             {"id": s["id"], "name": s["name"], "level": s["level"]}
             for s in skills[:5]
