@@ -97,8 +97,12 @@ async def generate_insights(uid: str) -> dict:
     """Analyze all chat sessions and extract user insights using Gemini."""
     model = _ensure_model()
 
-    # 1. Fetch all chat sessions
-    sessions = await get_chat_sessions(uid)
+    # 1. Fetch chat sessions. インサイト抽出は「価値観発見 / やりたいこと・目標」の
+    # 対話のみを対象にし、「知識の壁打ち」(mode=sparring) は無関係なので除外する。
+    all_sessions = await get_chat_sessions(uid)
+    sessions = [
+        s for s in all_sessions if s.get("mode") in (None, "discover", "vision")
+    ]
 
     if not sessions:
         return {
