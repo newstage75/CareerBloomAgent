@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends
 
 from middleware.auth import get_current_user
@@ -11,11 +13,18 @@ router = APIRouter()
 
 @router.get("")
 async def get_dashboard(user: UserInfo = Depends(get_current_user)):
-    """Aggregate dashboard data for the authenticated user."""
-    skills = await firestore.get_skills(user.uid)
-    roadmaps = await firestore.get_roadmaps(user.uid)
-    sessions = await firestore.get_chat_sessions(user.uid)
-    sparring_notes = await firestore.get_sparring_notes(user.uid)
+    """Aggregate dashboard data for the authenticated user.
+
+    4つのFirestoreコレクションを並列読み込み。Cloud Runのコールドスタート
+    時にこの集約API1本だけで全カウントを返せるよう、直列ではなく
+    ``asyncio.gather`` でまとめて待つ。
+    """
+    skills, roadmaps, sessions, sparring_notes = await asyncio.gather(
+        firestore.get_skills(user.uid),
+        firestore.get_roadmaps(user.uid),
+        firestore.get_chat_sessions(user.uid),
+        firestore.get_sparring_notes(user.uid),
+    )
 
     return {
         "skills_count": len(skills),

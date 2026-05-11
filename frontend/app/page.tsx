@@ -27,9 +27,26 @@ export default function Home() {
       setDashboard(null);
       return;
     }
-    apiFetch<DashboardData>("/api/dashboard")
-      .then(setDashboard)
-      .catch(() => {});
+    let cancelled = false;
+    let attempt = 0;
+    const tryFetch = () => {
+      apiFetch<DashboardData>("/api/dashboard")
+        .then((d) => {
+          if (!cancelled) setDashboard(d);
+        })
+        .catch(() => {
+          // Cloud Run のコールドスタート時は1回目が失敗・タイムアウト
+          // することがあるので、最大2回までバックオフ付きで再試行する。
+          attempt += 1;
+          if (!cancelled && attempt < 3) {
+            setTimeout(tryFetch, 1500 * attempt);
+          }
+        });
+    };
+    tryFetch();
+    return () => {
+      cancelled = true;
+    };
   }, [canUse, user]);
 
   const sessionsCount = dashboard?.chat_sessions_count ?? 0;
