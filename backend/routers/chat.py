@@ -8,10 +8,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 
 from middleware.auth import get_current_user
-from models.chat import ChatRequest, ChatSession, UpdateChatSessionTitleRequest
+from models.chat import (
+    ChatRequest,
+    ChatSession,
+    LikeMessageRequest,
+    UpdateChatSessionTitleRequest,
+)
 from models.user import UserInfo
 from services import firestore, vertex_ai, agent_service
 from services.quota import consume_chat_quota
+from services.quota import _consume_quotas
+from config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,7 +88,11 @@ async def get_sessions(
             mode=s.get("mode"),
             title=s.get("title"),
             messages=[
-                {"role": m["role"], "content": m["content"]}
+                {
+                    "role": m["role"],
+                    "content": m["content"],
+                    "liked": bool(m.get("liked", False)),
+                }
                 for m in s.get("messages", [])
             ],
             created_at=s["created_at"],
@@ -104,6 +115,83 @@ async def update_session_title(
     if not updated:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"id": session_id, "title": title}
+
+
+@router.patch("/sessions/{session_id}/messages/{message_idx}/like")
+async def set_message_liked(
+    session_id: str,
+    message_idx: int,
+    body: LikeMessageRequest,
+    user: UserInfo = Depends(get_current_user),
+):
+    """AI応答にいいね/いいね解除する。message_idx は 0 始まり。
+
+    いいね時: そのQ&Aから即座に知識ノートを1件生成して保存し、メッセージに
+    note_id を紐付ける。すでに紐付け済みなら再生成しない。
+    いいね解除時: 紐付いていたノートを削除する。
+    """
+    pair = await firestore.get_message_with_question(
+        user.uid, session_id, message_idx
+    )
+    if pair is None:
+        raise HTTPException(
+            status_code=404,
+            detail="セッション or AI応答メッセージが見つかりません",
+        )
+
+    existing_note_id: str | None = pair.get("note_id")
+
+    if body.liked:
+        # 1) すでにメッセージに note_id が紐付いていれば再生成しない
+        if existing_note_id:
+            await firestore.set_message_liked(
+                user.uid, session_id, message_idx, True, note_id=existing_note_id
+            )
+            return {"liked": True, "note_id": existing_note_id}
+
+        # 2) フォールバック: source_session_id + source_message_idx で既存ノートを検索
+        #    （旧データや過去の手動生成で紐付いていないケース）
+        existing_by_source = await firestore.find_sparring_note_by_source(
+            user.uid, session_id, message_idx
+        )
+        if existing_by_source:
+            await firestore.set_message_liked(
+                user.uid, session_id, message_idx, True, note_id=existing_by_source
+            )
+            return {"liked": True, "note_id": existing_by_source}
+
+        # 3) 新規生成 (クォータ消費)
+        await _consume_quotas([("total", settings.daily_ai_quota)])
+        note = await vertex_ai.generate_single_sparring_note(
+            pair.get("question", ""), pair.get("answer", "")
+        )
+        new_note_id: str | None = None
+        if note:
+            new_note_id = await firestore.save_sparring_note(
+                user.uid,
+                {
+                    **note,
+                    "source_session_id": session_id,
+                    "source_message_idx": message_idx,
+                    "source_pair_count": 1,
+                },
+            )
+        await firestore.set_message_liked(
+            user.uid,
+            session_id,
+            message_idx,
+            True,
+            note_id=new_note_id,
+        )
+        return {"liked": True, "note_id": new_note_id}
+    else:
+        # Unliked: 紐付いていたノートを削除
+        if existing_note_id:
+            await firestore.delete_sparring_note(user.uid, existing_note_id)
+        await firestore.set_message_liked(
+            user.uid, session_id, message_idx, False, note_id=None
+        )
+        return {"liked": False, "note_id": None}
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

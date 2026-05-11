@@ -12,6 +12,7 @@ from routers import (
     matching,
     public_config,
     skills,
+    sparring,
 )
 
 app = FastAPI(
@@ -37,4 +38,5 @@ app.include_router(matching.router, prefix="/api/matching", tags=["matching"])
 app.include_router(insights.router, prefix="/api", tags=["insights"])
 app.include_router(history.router, prefix="/api", tags=["history"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(sparring.router, prefix="/api/sparring", tags=["sparring"])
 app.include_router(public_config.router, prefix="/api", tags=["public"])

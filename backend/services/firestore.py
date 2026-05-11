@@ -179,6 +179,108 @@ async def append_chat_messages(
     )
 
 
+async def set_message_liked(
+    uid: str,
+    session_id: str,
+    message_idx: int,
+    liked: bool,
+    note_id: str | None = None,
+) -> dict | None:
+    """メッセージ配列の特定インデックスのメッセージに ``liked`` フラグを立てる。
+
+    note_id を指定すると、メッセージに紐付け（liked=False かつ note_id=None
+    でクリア）。Firestoreは配列要素のフィールド更新ができないので、
+    ドキュメント全体を読み込み → 配列を書き換え → set で書き戻す。
+    """
+    db = _get_db()
+    doc_ref = (
+        db.collection("users")
+        .document(uid)
+        .collection("chat_sessions")
+        .document(session_id)
+    )
+    doc = await doc_ref.get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    messages = data.get("messages", [])
+    if message_idx < 0 or message_idx >= len(messages):
+        return None
+    if messages[message_idx].get("role") != "assistant":
+        # ユーザー発言にはいいねさせない
+        return None
+    messages[message_idx]["liked"] = liked
+    if liked:
+        if note_id:
+            messages[message_idx]["note_id"] = note_id
+    else:
+        messages[message_idx].pop("note_id", None)
+    await doc_ref.update(
+        {"messages": messages, "updated_at": datetime.now(timezone.utc)}
+    )
+    return messages[message_idx]
+
+
+async def get_message_with_question(
+    uid: str, session_id: str, message_idx: int
+) -> dict | None:
+    """AI 応答メッセージと、その直前のユーザー質問を返す。"""
+    db = _get_db()
+    doc = await (
+        db.collection("users")
+        .document(uid)
+        .collection("chat_sessions")
+        .document(session_id)
+        .get()
+    )
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    messages = data.get("messages", [])
+    if message_idx < 0 or message_idx >= len(messages):
+        return None
+    m = messages[message_idx]
+    if m.get("role") != "assistant":
+        return None
+    question = ""
+    if message_idx > 0 and messages[message_idx - 1].get("role") == "user":
+        question = messages[message_idx - 1].get("content", "")
+    return {
+        "answer": m.get("content", ""),
+        "question": question,
+        "liked": bool(m.get("liked", False)),
+        "note_id": m.get("note_id"),
+    }
+
+
+async def get_liked_qa_pairs(uid: str, mode: str | None = None) -> list[dict]:
+    """ユーザーのいいね済み AI 応答 + その直前のユーザー質問をペアで返す。"""
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection("chat_sessions")
+    if mode:
+        ref_q = ref.where("mode", "==", mode)
+    else:
+        ref_q = ref
+    pairs: list[dict] = []
+    async for doc in ref_q.stream():
+        data = doc.to_dict()
+        messages = data.get("messages", [])
+        for i, m in enumerate(messages):
+            if m.get("role") == "assistant" and m.get("liked"):
+                question = ""
+                if i > 0 and messages[i - 1].get("role") == "user":
+                    question = messages[i - 1].get("content", "")
+                pairs.append(
+                    {
+                        "session_id": doc.id,
+                        "message_idx": i,
+                        "question": question,
+                        "answer": m.get("content", ""),
+                    }
+                )
+    return pairs
+
+
 async def update_chat_session_title(
     uid: str, session_id: str, title: str
 ) -> bool:
@@ -217,6 +319,78 @@ async def delete_chat_session(uid: str, session_id: str) -> bool:
 # ---------------------------------------------------------------------------
 # Roadmaps (深掘りエージェントβ)
 # ---------------------------------------------------------------------------
+
+
+async def find_sparring_note_by_source(
+    uid: str, session_id: str, message_idx: int
+) -> str | None:
+    """source_session_id + source_message_idx から既存のノートIDを探す。
+
+    旧データで message に note_id が紐付いていない場合のフォールバック検索。
+    """
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection("sparring_notes")
+    q = ref.where("source_session_id", "==", session_id).where(
+        "source_message_idx", "==", message_idx
+    ).limit(1)
+    async for doc in q.stream():
+        return doc.id
+    return None
+
+
+async def get_sparring_notes(uid: str) -> list[dict]:
+    db = _get_db()
+    ref = db.collection("users").document(uid).collection("sparring_notes")
+    query = ref.order_by(
+        "generated_at", direction=firestore_module.Query.DESCENDING
+    )
+    items: list[dict] = []
+    async for doc in query.stream():
+        item = doc.to_dict()
+        item["id"] = doc.id
+        items.append(item)
+    return items
+
+
+async def get_sparring_note(uid: str, note_id: str) -> dict | None:
+    db = _get_db()
+    doc = (
+        await db.collection("users")
+        .document(uid)
+        .collection("sparring_notes")
+        .document(note_id)
+        .get()
+    )
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    data["id"] = doc.id
+    return data
+
+
+async def save_sparring_note(uid: str, note: dict) -> str:
+    db = _get_db()
+    payload = {**note}
+    payload.setdefault("generated_at", datetime.now(timezone.utc))
+    ref = db.collection("users").document(uid).collection("sparring_notes")
+    doc_ref = ref.document()
+    await doc_ref.set(payload)
+    return doc_ref.id
+
+
+async def delete_sparring_note(uid: str, note_id: str) -> bool:
+    db = _get_db()
+    doc_ref = (
+        db.collection("users")
+        .document(uid)
+        .collection("sparring_notes")
+        .document(note_id)
+    )
+    doc = await doc_ref.get()
+    if not doc.exists:
+        return False
+    await doc_ref.delete()
+    return True
 
 
 async def get_roadmaps(uid: str) -> list[dict]:

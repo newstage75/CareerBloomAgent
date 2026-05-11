@@ -15,6 +15,7 @@ class ChatRequest(BaseModel):
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
+    liked: bool = False
 
 
 class ChatSession(BaseModel):
@@ -28,3 +29,7 @@ class ChatSession(BaseModel):
 
 class UpdateChatSessionTitleRequest(BaseModel):
     title: str
+
+
+class LikeMessageRequest(BaseModel):
+    liked: bool
