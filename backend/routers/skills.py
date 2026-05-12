@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from middleware.auth import get_current_user
+from middleware.path_validation import safe_path_id
 from models.skill import SkillCreate, SkillResponse
 from models.user import UserInfo
 from services import firestore, vertex_ai
@@ -46,7 +47,10 @@ async def add_skill(body: SkillCreate, user: UserInfo = Depends(get_current_user
 
 
 @router.delete("/{skill_id}", status_code=204)
-async def delete_skill(skill_id: str, user: UserInfo = Depends(get_current_user)):
+async def delete_skill(
+    skill_id: str = safe_path_id(),
+    user: UserInfo = Depends(get_current_user),
+):
     deleted = await firestore.delete_skill(user.uid, skill_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Skill not found")
