@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   DndContext,
   closestCenter,
@@ -27,6 +27,17 @@ type Props = {
 
 export default function RankedList({ initialItems, onStar }: Props) {
   const [items, setItems] = useState<ListItem[]>(initialItems);
+
+  // 親（insights）が initialItems.starred を更新した時、ローカル items の
+  // starred フィールドだけ同期する。テキスト編集や並び替えは保持。
+  useEffect(() => {
+    setItems((prev) =>
+      prev.map((p) => {
+        const upstream = initialItems.find((i) => i.id === p.id);
+        return upstream ? { ...p, starred: upstream.starred } : p;
+      })
+    );
+  }, [initialItems]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
