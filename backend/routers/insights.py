@@ -40,6 +40,19 @@ class UpdateVisionLabelsRequest(BaseModel):
     mid_term_label: str | None = None
     long_term_label: str | None = None
 
+
+class UpdateVisionRequest(BaseModel):
+    """ビジョン全体（本文 + ラベル）の手動編集用。
+
+    各フィールドは None なら変更しない。
+    """
+    short_term: str | None = None
+    mid_term: str | None = None
+    long_term: str | None = None
+    short_term_label: str | None = None
+    mid_term_label: str | None = None
+    long_term_label: str | None = None
+
 router = APIRouter()
 
 
@@ -137,6 +150,39 @@ async def edit_vision(
         },
     )
 
+    return insights
+
+
+@router.patch("/insights/vision")
+async def update_vision(
+    body: UpdateVisionRequest,
+    user: UserInfo = Depends(get_current_user),
+):
+    """ビジョン全体（本文＋ラベル）を手動編集で保存する。"""
+    insights = await get_insights(user.uid)
+    if not insights:
+        raise HTTPException(status_code=404, detail="インサイトがありません")
+
+    vision = insights.get("vision") or {}
+
+    # content
+    if body.short_term is not None:
+        vision["short_term"] = body.short_term.strip()
+    if body.mid_term is not None:
+        vision["mid_term"] = body.mid_term.strip()
+    if body.long_term is not None:
+        vision["long_term"] = body.long_term.strip()
+
+    # labels (max 20 chars)
+    if body.short_term_label is not None:
+        vision["short_term_label"] = body.short_term_label.strip()[:20]
+    if body.mid_term_label is not None:
+        vision["mid_term_label"] = body.mid_term_label.strip()[:20]
+    if body.long_term_label is not None:
+        vision["long_term_label"] = body.long_term_label.strip()[:20]
+
+    insights["vision"] = vision
+    await save_insights(user.uid, insights)
     return insights
 
 

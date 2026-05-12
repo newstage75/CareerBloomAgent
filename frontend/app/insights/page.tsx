@@ -10,6 +10,9 @@ import {
   HiOutlineTrophy,
   HiOutlineNoSymbol,
   HiOutlineSparkles,
+  HiOutlinePencilSquare,
+  HiOutlineCheck,
+  HiOutlineXMark,
 } from "react-icons/hi2";
 import type { UserInsights } from "@/app/types";
 import { useAuth } from "@/app/lib/auth";
@@ -106,6 +109,17 @@ export default function InsightsPage() {
   }, [canUse, authLoading]);
 
   const handleStarValue = async (label: string, starred: boolean) => {
+    // 楽観更新: UIを即座に反映
+    setInsights((prev) =>
+      prev
+        ? {
+            ...prev,
+            values: prev.values.map((v) =>
+              v.label === label ? { ...v, starred } : v
+            ),
+          }
+        : prev
+    );
     try {
       const data = await apiFetch<ApiInsightsResponse>("/api/insights/values/star", {
         method: "POST",
@@ -115,7 +129,17 @@ export default function InsightsPage() {
         setInsights(mapApiToInsights(data));
       }
     } catch {
-      // ignore
+      // 失敗時はロールバック
+      setInsights((prev) =>
+        prev
+          ? {
+              ...prev,
+              values: prev.values.map((v) =>
+                v.label === label ? { ...v, starred: !starred } : v
+              ),
+            }
+          : prev
+      );
     }
   };
 
@@ -134,6 +158,18 @@ export default function InsightsPage() {
   };
 
   const handleStarListItem = async (listName: string, itemId: string, starred: boolean) => {
+    const key = listName === "bucket_list" ? "bucketList" : "neverList";
+    // 楽観更新
+    setInsights((prev) =>
+      prev
+        ? {
+            ...prev,
+            [key]: prev[key].map((it) =>
+              it.id === itemId ? { ...it, starred } : it
+            ),
+          }
+        : prev
+    );
     try {
       const data = await apiFetch<ApiInsightsResponse>("/api/insights/list/star", {
         method: "POST",
@@ -143,42 +179,111 @@ export default function InsightsPage() {
         setInsights(mapApiToInsights(data));
       }
     } catch {
-      // ignore
+      // 失敗時ロールバック
+      setInsights((prev) =>
+        prev
+          ? {
+              ...prev,
+              [key]: prev[key].map((it) =>
+                it.id === itemId ? { ...it, starred: !starred } : it
+              ),
+            }
+          : prev
+      );
     }
   };
 
   const [visionInstruction, setVisionInstruction] = useState("");
   const [visionEditing, setVisionEditing] = useState(false);
 
-  const handleChangeVisionLabel = async (
+  // ビジョン手動編集: 編集モード ON 中はドラフトを保持し、保存ボタンで一括反映
+  const [visionEditMode, setVisionEditMode] = useState(false);
+  const [visionDraft, setVisionDraft] = useState<UserInsights["vision"] | null>(
+    null
+  );
+  const [visionSaving, setVisionSaving] = useState(false);
+
+  const enterVisionEdit = () => {
+    if (!insights) return;
+    setVisionDraft(insights.vision);
+    setVisionEditMode(true);
+  };
+
+  const cancelVisionEdit = () => {
+    setVisionDraft(null);
+    setVisionEditMode(false);
+  };
+
+  const isVisionDirty = (() => {
+    if (!visionEditMode || !visionDraft || !insights) return false;
+    const a = insights.vision;
+    const b = visionDraft;
+    return (
+      a.shortTerm !== b.shortTerm ||
+      a.midTerm !== b.midTerm ||
+      a.longTerm !== b.longTerm ||
+      (a.shortTermLabel ?? "") !== (b.shortTermLabel ?? "") ||
+      (a.midTermLabel ?? "") !== (b.midTermLabel ?? "") ||
+      (a.longTermLabel ?? "") !== (b.longTermLabel ?? "")
+    );
+  })();
+
+  const handleChangeVisionLabel = (
     axis: "short_term" | "mid_term" | "long_term",
     label: string
   ) => {
-    // 楽観更新
-    setInsights((prev) =>
+    setVisionDraft((prev) =>
       prev
         ? {
             ...prev,
-            vision: {
-              ...prev.vision,
-              ...(axis === "short_term" ? { shortTermLabel: label } : {}),
-              ...(axis === "mid_term" ? { midTermLabel: label } : {}),
-              ...(axis === "long_term" ? { longTermLabel: label } : {}),
-            },
+            ...(axis === "short_term" ? { shortTermLabel: label } : {}),
+            ...(axis === "mid_term" ? { midTermLabel: label } : {}),
+            ...(axis === "long_term" ? { longTermLabel: label } : {}),
           }
         : prev
     );
+  };
+
+  const handleChangeVisionContent = (
+    axis: "short_term" | "mid_term" | "long_term",
+    content: string
+  ) => {
+    setVisionDraft((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...(axis === "short_term" ? { shortTerm: content } : {}),
+            ...(axis === "mid_term" ? { midTerm: content } : {}),
+            ...(axis === "long_term" ? { longTerm: content } : {}),
+          }
+        : prev
+    );
+  };
+
+  const handleSaveVision = async () => {
+    if (!visionDraft || visionSaving) return;
+    setVisionSaving(true);
     try {
-      await apiFetch<ApiInsightsResponse>("/api/insights/vision/labels", {
+      const data = await apiFetch<ApiInsightsResponse>("/api/insights/vision", {
         method: "PATCH",
         body: JSON.stringify({
-          short_term_label: axis === "short_term" ? label : undefined,
-          mid_term_label: axis === "mid_term" ? label : undefined,
-          long_term_label: axis === "long_term" ? label : undefined,
+          short_term: visionDraft.shortTerm,
+          mid_term: visionDraft.midTerm,
+          long_term: visionDraft.longTerm,
+          short_term_label: visionDraft.shortTermLabel ?? "",
+          mid_term_label: visionDraft.midTermLabel ?? "",
+          long_term_label: visionDraft.longTermLabel ?? "",
         }),
       });
+      if (!("status" in data)) {
+        setInsights(mapApiToInsights(data));
+      }
+      setVisionEditMode(false);
+      setVisionDraft(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "ラベル更新に失敗しました");
+      setError(err instanceof Error ? err.message : "ビジョンの保存に失敗しました");
+    } finally {
+      setVisionSaving(false);
     }
   };
   const handleEditVision = async () => {
@@ -352,11 +457,49 @@ export default function InsightsPage() {
       <InsightSection
         title="キャリアビジョン"
         icon={<HiOutlineRocketLaunch className="h-5 w-5" />}
+        action={
+          canUse ? (
+            visionEditMode ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={cancelVisionEdit}
+                  disabled={visionSaving}
+                  className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <HiOutlineXMark className="h-3.5 w-3.5" />
+                  キャンセル
+                </button>
+                {isVisionDirty && (
+                  <button
+                    type="button"
+                    onClick={handleSaveVision}
+                    disabled={visionSaving}
+                    className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    <HiOutlineCheck className="h-3.5 w-3.5" />
+                    {visionSaving ? "保存中..." : "保存"}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={enterVisionEdit}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
+              >
+                <HiOutlinePencilSquare className="h-3.5 w-3.5" />
+                編集
+              </button>
+            )
+          ) : null
+        }
       >
         <VisionTimeline
-          {...insights.vision}
-          editable={canUse}
+          {...(visionEditMode && visionDraft ? visionDraft : insights.vision)}
+          editable={visionEditMode}
           onChangeLabel={handleChangeVisionLabel}
+          onChangeContent={handleChangeVisionContent}
         />
         {canUse && (
           <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">

@@ -8,6 +8,10 @@ type Props = VisionSummary & {
     axis: "short_term" | "mid_term" | "long_term",
     label: string
   ) => void;
+  onChangeContent?: (
+    axis: "short_term" | "mid_term" | "long_term",
+    content: string
+  ) => void;
 };
 
 // 全軸共通の選択肢（1ヶ月〜20年）+ 各軸のデフォルトの「短期/中期/長期」
@@ -39,6 +43,7 @@ export default function VisionTimeline({
   longTermLabel,
   editable,
   onChangeLabel,
+  onChangeContent,
 }: Props) {
   const rows: {
     key: "short" | "mid" | "long";
@@ -103,7 +108,19 @@ export default function VisionTimeline({
                   {row.label}
                 </span>
               )}
-              <p className="mt-1 text-sm text-gray-700">{row.content}</p>
+              {editable && onChangeContent ? (
+                <textarea
+                  value={row.content}
+                  onChange={(e) => onChangeContent(row.axis, e.target.value)}
+                  rows={2}
+                  className="mt-1 w-full resize-y rounded border border-gray-200 px-2 py-1 text-sm text-gray-700 focus:border-sky-500 focus:outline-none"
+                  placeholder="目標やビジョンを書いてください"
+                />
+              ) : (
+                <p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">
+                  {row.content}
+                </p>
+              )}
             </div>
           </div>
         );
