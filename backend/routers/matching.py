@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 from middleware.auth import get_current_user
+from middleware.path_validation import safe_path_id
 from models.user import UserInfo
 from services import firestore, agent_service
 from services.quota import consume_chat_quota, consume_deep_research_quota
@@ -44,6 +45,25 @@ _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 _YOUTUBE_ID_RE = re.compile(
     r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([A-Za-z0-9_-]{11})"
 )
+
+# Goal text に挿入されると AI への指示を上書きできるトークンを潰す。
+# 改行・マークダウン見出し・コードフェンスは除去/置換し、200字に切り詰める。
+_GOAL_MAX_LEN = 200
+_GOAL_DANGEROUS_RE = re.compile(r"^\s*#+\s*", re.MULTILINE)
+_GOAL_FENCE_RE = re.compile(r"`{3,}")
+
+
+def _sanitize_goal_text(raw: str) -> str:
+    """ユーザーの goal_text からプロンプトインジェクションの足場を除去する。"""
+    s = (raw or "").strip()
+    # 全ての改行類を半角スペースへ
+    s = re.sub(r"[\r\n\t]+", " ", s)
+    # 連続スペースを1つに圧縮
+    s = re.sub(r"\s{2,}", " ", s)
+    # マークダウン見出し記号とコードフェンスを除去
+    s = _GOAL_DANGEROUS_RE.sub("", s)
+    s = _GOAL_FENCE_RE.sub("", s)
+    return s[:_GOAL_MAX_LEN]
 
 
 async def _verify_youtube_url(client: httpx.AsyncClient, url: str) -> bool:
@@ -107,7 +127,8 @@ async def list_roadmaps(user: UserInfo = Depends(get_current_user)):
 
 @router.get("/{goal_id}")
 async def get_roadmap_detail(
-    goal_id: str, user: UserInfo = Depends(get_current_user)
+    goal_id: str = safe_path_id(),
+    user: UserInfo = Depends(get_current_user),
 ):
     roadmap = await firestore.get_roadmap(user.uid, goal_id)
     if not roadmap:
@@ -117,7 +138,8 @@ async def get_roadmap_detail(
 
 @router.delete("/{goal_id}", status_code=204)
 async def delete_roadmap(
-    goal_id: str, user: UserInfo = Depends(get_current_user)
+    goal_id: str = safe_path_id(),
+    user: UserInfo = Depends(get_current_user),
 ):
     deleted = await firestore.delete_roadmap(user.uid, goal_id)
     if not deleted:
@@ -139,10 +161,14 @@ async def generate_roadmap(
     ``done`` イベントで goal_id を返す。
     """
     uid = user.uid
-    goal_text = body.goal_text.strip()
+    goal_text = _sanitize_goal_text(body.goal_text or "")
     if not goal_text:
         raise HTTPException(status_code=400, detail="goal_text is required")
-    goal_id = (body.goal_id or uuid.uuid4().hex)[:60]
+    # goal_id は呼び出し側で再利用される可能性があるので、安全な文字に限定
+    candidate = body.goal_id or uuid.uuid4().hex
+    goal_id = re.sub(r"[^A-Za-z0-9_-]", "", candidate)[:60]
+    if not goal_id:
+        goal_id = uuid.uuid4().hex
 
     async def event_generator():
         started_at = time.monotonic()
@@ -172,9 +198,15 @@ async def generate_roadmap(
                     "agent",
                     {"agent": "roadmap_advisor", **evt, "elapsed": elapsed()},
                 )
-        except Exception as e:
+        except Exception:
             logger.exception("Roadmap generation failed for user %s", uid)
-            yield _sse("error", {"message": str(e), "elapsed": elapsed()})
+            yield _sse(
+                "error",
+                {
+                    "message": "深掘りエージェントでエラーが発生しました",
+                    "elapsed": elapsed(),
+                },
+            )
             return
 
         roadmap = _extract_json(final_text)
@@ -207,11 +239,14 @@ async def generate_roadmap(
 
         try:
             await firestore.save_roadmap(uid, goal_id, roadmap)
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to save roadmap")
             yield _sse(
                 "error",
-                {"message": f"保存エラー: {e}", "elapsed": elapsed()},
+                {
+                    "message": "ロードマップの保存に失敗しました",
+                    "elapsed": elapsed(),
+                },
             )
             return
 

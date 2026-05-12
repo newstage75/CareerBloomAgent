@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from middleware.auth import get_current_user
 from models.user import UserInfo
@@ -78,8 +82,12 @@ async def get_user_insights_history(
 async def generate_user_insights(user: UserInfo = Depends(get_current_user)):
     try:
         insights = await generate_insights(user.uid)
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except ValueError:
+        logger.exception("Insight generation failed for user %s", user.uid)
+        raise HTTPException(
+            status_code=500,
+            detail="インサイト生成中にエラーが発生しました",
+        )
     return insights
 
 

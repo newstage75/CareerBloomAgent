@@ -149,9 +149,9 @@ async def stream_agent_events(
                 text = event.content.parts[0].text
                 if event.is_final_response():
                     yield {"type": "final", "text": text}
-    except Exception as exc:
+    except Exception:
         logger.exception("Agent streaming failed")
-        yield {"type": "error", "message": str(exc)}
+        yield {"type": "error", "message": "エージェント実行中にエラーが発生しました"}
 
 
 async def run_insight_extraction(uid: str, session_id: str) -> None:

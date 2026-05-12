@@ -4,10 +4,11 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from starlette.responses import StreamingResponse
 
 from middleware.auth import get_current_user
+from middleware.path_validation import safe_path_id
 from models.chat import (
     ChatRequest,
     ChatSession,
@@ -43,9 +44,12 @@ async def chat(body: ChatRequest, user: UserInfo = Depends(get_current_user)):
             ):
                 full_response += chunk
                 yield f"event: message\ndata: {json.dumps({'content': chunk})}\n\n"
-        except Exception as exc:
+        except Exception:
             logger.exception("Gemini streaming error")
-            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+            yield (
+                "event: error\n"
+                f"data: {json.dumps({'error': 'AI応答中にエラーが発生しました'})}\n\n"
+            )
             return
 
         # Persist both messages
@@ -104,8 +108,8 @@ async def get_sessions(
 
 @router.patch("/sessions/{session_id}")
 async def update_session_title(
-    session_id: str,
     body: UpdateChatSessionTitleRequest,
+    session_id: str = safe_path_id(),
     user: UserInfo = Depends(get_current_user),
 ):
     title = body.title.strip()[:80]  # cap at 80 chars to keep storage tidy
@@ -119,9 +123,9 @@ async def update_session_title(
 
 @router.patch("/sessions/{session_id}/messages/{message_idx}/like")
 async def set_message_liked(
-    session_id: str,
-    message_idx: int,
     body: LikeMessageRequest,
+    session_id: str = safe_path_id(),
+    message_idx: int = Path(..., ge=0, le=10000),
     user: UserInfo = Depends(get_current_user),
 ):
     """AI応答にいいね/いいね解除する。message_idx は 0 始まり。
@@ -196,7 +200,7 @@ async def set_message_liked(
 
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(
-    session_id: str,
+    session_id: str = safe_path_id(),
     user: UserInfo = Depends(get_current_user),
 ):
     deleted = await firestore.delete_chat_session(user.uid, session_id)
