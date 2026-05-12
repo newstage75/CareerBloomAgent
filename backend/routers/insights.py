@@ -34,6 +34,12 @@ class StarListItemRequest(BaseModel):
 class EditVisionRequest(BaseModel):
     instruction: str
 
+
+class UpdateVisionLabelsRequest(BaseModel):
+    short_term_label: str | None = None
+    mid_term_label: str | None = None
+    long_term_label: str | None = None
+
 router = APIRouter()
 
 
@@ -130,6 +136,33 @@ async def edit_vision(
             "source": "vision",
         },
     )
+
+    return insights
+
+
+@router.patch("/insights/vision/labels")
+async def update_vision_labels(
+    body: UpdateVisionLabelsRequest,
+    user: UserInfo = Depends(get_current_user),
+):
+    """ビジョンの時間軸ラベル（短期/中期/長期の表示名）を更新する。
+
+    例: short_term_label="1年後", mid_term_label="3年後", long_term_label="10年後"
+    None で渡されたラベルは変更しない。
+    """
+    insights = await get_insights(user.uid)
+    if not insights:
+        raise HTTPException(status_code=404, detail="インサイトがありません")
+
+    vision = insights.get("vision") or {}
+    if body.short_term_label is not None:
+        vision["short_term_label"] = body.short_term_label.strip()[:20]
+    if body.mid_term_label is not None:
+        vision["mid_term_label"] = body.mid_term_label.strip()[:20]
+    if body.long_term_label is not None:
+        vision["long_term_label"] = body.long_term_label.strip()[:20]
+    insights["vision"] = vision
+    await save_insights(user.uid, insights)
 
     return insights
 

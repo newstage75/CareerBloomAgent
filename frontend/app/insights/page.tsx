@@ -29,7 +29,14 @@ type ApiInsightsResponse =
         confidence: "high" | "medium" | "low";
         starred?: boolean;
       }[];
-      vision: { short_term: string; mid_term: string; long_term: string };
+      vision: {
+        short_term: string;
+        mid_term: string;
+        long_term: string;
+        short_term_label?: string;
+        mid_term_label?: string;
+        long_term_label?: string;
+      };
       strengths: string[];
       themes: string[];
       bucket_list: { id: string; text: string }[];
@@ -46,6 +53,9 @@ function mapApiToInsights(
       shortTerm: data.vision.short_term,
       midTerm: data.vision.mid_term,
       longTerm: data.vision.long_term,
+      shortTermLabel: data.vision.short_term_label,
+      midTermLabel: data.vision.mid_term_label,
+      longTermLabel: data.vision.long_term_label,
     },
     strengths: data.strengths,
     themes: data.themes,
@@ -139,6 +149,38 @@ export default function InsightsPage() {
 
   const [visionInstruction, setVisionInstruction] = useState("");
   const [visionEditing, setVisionEditing] = useState(false);
+
+  const handleChangeVisionLabel = async (
+    axis: "short_term" | "mid_term" | "long_term",
+    label: string
+  ) => {
+    // 楽観更新
+    setInsights((prev) =>
+      prev
+        ? {
+            ...prev,
+            vision: {
+              ...prev.vision,
+              ...(axis === "short_term" ? { shortTermLabel: label } : {}),
+              ...(axis === "mid_term" ? { midTermLabel: label } : {}),
+              ...(axis === "long_term" ? { longTermLabel: label } : {}),
+            },
+          }
+        : prev
+    );
+    try {
+      await apiFetch<ApiInsightsResponse>("/api/insights/vision/labels", {
+        method: "PATCH",
+        body: JSON.stringify({
+          short_term_label: axis === "short_term" ? label : undefined,
+          mid_term_label: axis === "mid_term" ? label : undefined,
+          long_term_label: axis === "long_term" ? label : undefined,
+        }),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "ラベル更新に失敗しました");
+    }
+  };
   const handleEditVision = async () => {
     const instruction = visionInstruction.trim();
     if (!instruction || visionEditing) return;
@@ -311,7 +353,11 @@ export default function InsightsPage() {
         title="キャリアビジョン"
         icon={<HiOutlineRocketLaunch className="h-5 w-5" />}
       >
-        <VisionTimeline {...insights.vision} />
+        <VisionTimeline
+          {...insights.vision}
+          editable={canUse}
+          onChangeLabel={handleChangeVisionLabel}
+        />
         {canUse && (
           <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
             <label className="mb-1 block text-xs font-medium text-gray-600">

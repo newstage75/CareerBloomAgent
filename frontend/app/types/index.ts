@@ -31,6 +31,9 @@ export type VisionSummary = {
   shortTerm: string;
   midTerm: string;
   longTerm: string;
+  shortTermLabel?: string;
+  midTermLabel?: string;
+  longTermLabel?: string;
 };
 
 export type ListItem = {
