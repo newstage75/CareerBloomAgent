@@ -22,12 +22,21 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+# CORS: 明示的に origin を固定し、credentials=True と '*' の組合せを禁止する。
+# 起動時に wildcard が混入していたら起動を失敗させて運用ミスを防ぐ。
+_allowed_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+assert _allowed_origins, "ALLOWED_ORIGINS must not be empty"
+assert "*" not in _allowed_origins, (
+    "ALLOWED_ORIGINS must not contain '*' because allow_credentials=True"
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.allowed_origins.split(",")],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # 実際に使うHTTPメソッド/ヘッダのみに絞る（誤って攻撃面を広げないため）
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(health.router)
