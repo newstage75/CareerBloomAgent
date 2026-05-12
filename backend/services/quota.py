@@ -68,29 +68,37 @@ def _usage_doc():
 
 
 async def _consume_quotas(checks: list[tuple[str, int]]) -> dict[str, int]:
-    """Consume one unit from each named counter, atomically check all limits.
+    """Consume one unit from each named counter atomically inside a Firestore transaction.
 
-    The check-then-write pattern is racy under burst contention but is fine
-    for hackathon-scale traffic. Returns a dict of new counter values.
+    Read-modify-write happens inside ``@async_transactional`` so concurrent
+    burst calls cannot all pass the limit check simultaneously. Aborted
+    transactions are retried by the SDK; an ``HTTPException(429)`` raised
+    inside propagates out untouched.
     """
+    db = _get_db()
     doc_ref = _usage_doc()
-    snap = await doc_ref.get()
-    current = snap.to_dict() if snap.exists else {}
 
-    for field, limit in checks:
-        if int(current.get(field, 0)) >= limit:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=_quota_message(),
-            )
+    @firestore_module.async_transactional
+    async def _txn(transaction) -> dict[str, int]:
+        snap = await doc_ref.get(transaction=transaction)
+        current = snap.to_dict() if snap.exists else {}
 
-    update: dict = {"updated_at": datetime.now(timezone.utc)}
-    new_counts: dict[str, int] = {}
-    for field, _ in checks:
-        update[field] = firestore_module.Increment(1)
-        new_counts[field] = int(current.get(field, 0)) + 1
-    await doc_ref.set(update, merge=True)
-    return new_counts
+        for field, limit in checks:
+            if int(current.get(field, 0)) >= limit:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=_quota_message(),
+                )
+
+        update: dict = {"updated_at": datetime.now(timezone.utc)}
+        new_counts: dict[str, int] = {}
+        for field, _ in checks:
+            update[field] = firestore_module.Increment(1)
+            new_counts[field] = int(current.get(field, 0)) + 1
+        transaction.set(doc_ref, update, merge=True)
+        return new_counts
+
+    return await _txn(db.transaction())
 
 
 async def consume_chat_quota() -> None:
