@@ -10,7 +10,8 @@ from __future__ import annotations
 from fastapi import Path
 
 # 英数 + アンダースコア + ハイフン、1〜80文字。
-ID_PATTERN = r"^[A-Za-z0-9_-]{1,80}$"
+# 先頭と末尾は英数字に限定して、Firestore 予約パターン (``__name__`` 等) を弾く。
+ID_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,78}[A-Za-z0-9])?$"
 
 
 def safe_path_id() -> object:
