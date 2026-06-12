@@ -53,6 +53,8 @@ build/
 */.env.production.local
 
 # Google Cloud
+# Cloud Build設定はローカル専用 (publicリポジトリに設定値を載せないため)
+cloudbuild-*.yaml
 *.json
 !package.json
 !package-lock.json
