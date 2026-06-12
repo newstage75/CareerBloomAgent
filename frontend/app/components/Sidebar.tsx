@@ -12,8 +12,11 @@ import {
   HiOutlineMap,
   HiOutlineChatBubbleLeftRight,
   HiOutlineBookOpen,
+  HiOutlineShieldCheck,
 } from "react-icons/hi2";
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import { useAuth } from "../lib/auth";
+import { apiFetch } from "../lib/api";
 
 type NavItem = {
   href: string;
@@ -70,8 +73,32 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
+const adminItem: NavItem = {
+  href: "/admin",
+  label: "管理者ダッシュボード",
+  icon: HiOutlineShieldCheck,
+};
+
+function useIsAdmin(): boolean {
+  const { user } = useAuth();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      setIsAdmin(false);
+      return;
+    }
+    apiFetch<{ is_admin: boolean }>("/api/admin/me")
+      .then((data) => setIsAdmin(data.is_admin))
+      .catch(() => setIsAdmin(false));
+  }, [user]);
+
+  return isAdmin;
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
+  const isAdmin = useIsAdmin();
 
   return (
     <aside className="hidden w-56 shrink-0 border-r border-gray-200 bg-gray-50 md:block">
@@ -92,6 +119,15 @@ export default function Sidebar() {
             ))}
           </div>
         ))}
+
+        {isAdmin && (
+          <div className="mt-4">
+            <p className="mb-1 px-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
+              管理
+            </p>
+            <NavLink item={adminItem} active={pathname === adminItem.href} />
+          </div>
+        )}
       </nav>
     </aside>
   );

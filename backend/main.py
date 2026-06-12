@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from routers import (
+    admin,
     auth,
     chat,
     dashboard,
@@ -49,3 +50,4 @@ app.include_router(history.router, prefix="/api", tags=["history"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(sparring.router, prefix="/api/sparring", tags=["sparring"])
 app.include_router(public_config.router, prefix="/api", tags=["public"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])

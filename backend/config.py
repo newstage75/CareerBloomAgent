@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     guest_uid_prefix: str = "guest_"
     guest_reset_hour_jst: int = 4
 
+    # --- Admin ---
+    # Comma-separated allowlists for the admin dashboard. A user is an admin
+    # if their email OR uid matches. Set via .env / Cloud Run env vars —
+    # never commit actual values to git. Both empty = nobody is an admin
+    # (admin APIs always return 403).
+    admin_emails: str = ""
+    admin_uids: str = ""
+
     # --- Daily AI usage quotas (site-wide, shared across all users) ---
     daily_ai_quota: int = 2000
     # Quota for "deep research" calls — Web-search-grounded agents that are
